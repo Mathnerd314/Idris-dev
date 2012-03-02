@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, DeriveFunctor #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, DeriveFunctor, DeriveDataTypeable #-}
 
 module Idris.ElabDecls where
 
@@ -18,6 +18,7 @@ import Core.CaseTree
 
 import Control.Monad
 import Control.Monad.State
+import Data.Data(Data, Typeable)
 import Data.List
 import Data.Maybe
 import Debug.Trace
@@ -93,7 +94,7 @@ elabCon info syn (n, t_in, fc)
          return (n, cty)
 
 elabClauses :: ElabInfo -> FC -> FnOpts -> Name -> [PClause] -> Idris ()
-elabClauses info fc opts n_in cs_in = let n = liftname info n_in in  
+elabClauses info fc opts n_in cs_in = let n = n_in in  
       do let cs = genClauses cs_in
          pats_in <- mapM (elabClause info fc (TCGen `elem` opts)) cs
          solveDeferred n
@@ -204,10 +205,11 @@ elabClause info fc tcgen (PClause fname lhs_in withs rhs_in whereblock)
                 newps = params info ++ ns
                 dsParams = map (\n -> (n, map fst newps)) ds
                 newb = addAlist dsParams (inblock info) 
-                l = liftname info in
-                info { params = newps,
-                       inblock = newb,
-                       liftname = id -- (\n -> case lookupCtxt n newb of
+                -- l = liftname info
+              in
+                info { params = newps
+                     , inblock = newb
+                --   , liftname = id -- (\n -> case lookupCtxt n newb of
                                      --      Nothing -> n
                                      --      _ -> MN i (show n)) . l
                     }
@@ -320,7 +322,7 @@ elabClause info fc tcgen (PWith fname lhs_in withs wval_in withblock)
     fullApp (PApp _ (PApp fc f args) xs) = fullApp (PApp fc f (args ++ xs))
     fullApp x = x
 
-data MArgTy = IA | EA | CA deriving Show
+data MArgTy = IA | EA | CA deriving (Show, Eq, Data, Typeable)
 
 elabClass :: ElabInfo -> SyntaxInfo -> 
              FC -> [PTerm] -> 
@@ -583,7 +585,23 @@ elabDecl' info (PClass s f cs n ps ds) = do iLOG $ "Elaborating class " ++ show 
 elabDecl' info (PInstance s f cs n ps t ds) 
     = do iLOG $ "Elaborating instance " ++ show n
          elabInstance info s f cs n ps t ds
-elabDecl' info (PDirective i) = i
+elabDecl' info (PDirective i) = case i of
+  Lib lib -> do addLib lib
+                addIBC (IBCLib lib)
+  Link obj -> do datadir <- liftIO $ getDataDir
+                 o <- liftIO $ findInPath [".", datadir] obj
+                 addIBC (IBCObj o)
+                 addObjectFile o
+  Include hdr -> do addHdr hdr
+                    addIBC (IBCHeader hdr)
+  Hide n -> do setAccessibility n Hidden
+               addIBC (IBCAccess n Hidden)
+  Freeze n -> do setAccessibility n Frozen
+                 addIBC (IBCAccess n Frozen)
+  Access acc -> do i <- getIState
+                   putIState (i { default_access = acc })
+  Logging i -> setLogLevel (fromInteger i)
+  
 
 elabCaseBlock info d@(PClauses f o n ps) 
         = elabDecl' info d 

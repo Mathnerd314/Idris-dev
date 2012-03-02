@@ -41,7 +41,7 @@ processCommand (Print n) state =
          [tm] -> (state, show tm)
          _ -> (state, "No such name")
 processCommand (Tac e)  state 
-    | Just ps <- prf state = case execElab () e ps of
+    | Just ps <- prf state = case execElab () (process e) ps of
                                 OK (ES (ps', _) resp _) -> 
                                    if (not (done ps')) 
                                       then (state { prf = Just ps' }, resp)
@@ -52,6 +52,14 @@ processCommand (Tac e)  state
                                                                      (context ps') }, resp)
                                 err -> (state, show err)
     | otherwise = (state, "No proof in progress")
+  where
+    process (Defer n) = defer n
+    process (PatVar n) = patvar n
+    -- Abstract over an argument of unknown type, giving a name for the hole
+    -- which we'll fill with the argument type too.
+    process (Arg n tyhole) = arg n tyhole
+    process (Apply tm args) = discard (apply tm (map (\x -> (x,0)) args))
+    process e = processTactic' e
 
 runShell :: ShellState -> InputT IO ShellState
 runShell st = do (prompt, parser) <- 

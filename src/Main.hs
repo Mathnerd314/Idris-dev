@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+
 module Main where
 
 import System.Console.Haskeline
@@ -7,6 +9,7 @@ import System.Exit
 
 import Data.Maybe
 import Data.Version
+import Data.Data(Data,Typeable)
 import Control.Monad.State
 
 import Core.CoreParser
@@ -38,7 +41,7 @@ data Opt = Filename String
          | Output String
          | TypeCase
          | TypeInType
-    deriving Eq
+    deriving (Eq, Data, Typeable)
 
 main = do xs <- getArgs
           opts <- parseArgs xs

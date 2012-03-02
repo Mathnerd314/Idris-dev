@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, DeriveFunctor,
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, DeriveFunctor, DeriveDataTypeable,
              TypeSynonymInstances, PatternGuards #-}
 
 module Idris.AbsSyntax where
@@ -12,6 +12,7 @@ import System.Console.Haskeline
 import Control.Monad.State
 import Data.List
 import Data.Char
+import Data.Data(Data, Typeable)
 import Debug.Trace
 
 import qualified Epic.Epic as E
@@ -22,7 +23,7 @@ data IOption = IOption { opt_logLevel :: Int,
                          opt_showimp  :: Bool,
                          opt_repl     :: Bool
                        }
-    deriving (Show, Eq)
+    deriving (Show, Eq, Data, Typeable)
 
 defaultOpts = IOption 0 False False False True
 
@@ -57,7 +58,7 @@ data IState = IState { tt_ctxt :: Context,
                        default_access :: Accessibility,
                        ibc_write :: [IBCWrite]
                      }
-             
+
 -- information that needs writing for the current module's .ibc file
 data IBCWrite = IBCFix FixDecl
               | IBCImp Name
@@ -71,7 +72,7 @@ data IBCWrite = IBCFix FixDecl
               | IBCHeader String
               | IBCAccess Name Accessibility
               | IBCDef Name -- i.e. main context
-  deriving Show
+  deriving (Eq, Show, Data, Typeable)
 
 idrisInit = IState initContext [] [] emptyContext emptyContext emptyContext
                    "" defaultOpts 6 [] [] [] [] [] [] [] [] 
@@ -251,6 +252,7 @@ data Command = Quit | Help | Eval PTerm | Check PTerm | Reload | Edit
              | TTShell 
              | LogLvl Int | Spec PTerm | HNF PTerm | Defn Name
              | NOP
+    deriving (Show, Eq, Data, Typeable)
 
 -- Parsed declarations
 
@@ -258,7 +260,7 @@ data Fixity = Infixl { prec :: Int }
             | Infixr { prec :: Int }
             | InfixN { prec :: Int } 
             | PrefixN { prec :: Int }
-    deriving Eq
+    deriving (Eq, Data, Typeable)
 {-! 
 deriving instance Binary Fixity 
 !-}
@@ -270,7 +272,7 @@ instance Show Fixity where
     show (PrefixN i) = "prefix " ++ show i
 
 data FixDecl = Fix Fixity String 
-    deriving (Show, Eq)
+    deriving (Show, Eq, Data, Typeable)
 {-! 
 deriving instance Binary FixDecl 
 !-}
@@ -280,7 +282,7 @@ instance Ord FixDecl where
 
 
 data Static = Static | Dynamic
-  deriving (Show, Eq)
+  deriving (Show, Eq, Data, Typeable)
 {-! 
 deriving instance Binary Static 
 !-}
@@ -292,7 +294,7 @@ data Plicity = Imp { plazy :: Bool,
                      pstatic :: Static }
              | Constraint { plazy :: Bool,
                             pstatic :: Static }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Data, Typeable)
 
 {-!
 deriving instance Binary Plicity 
@@ -303,7 +305,7 @@ expl = Exp False Dynamic
 constraint = Constraint False Static
 
 data FnOpt = Inlinable | Partial | Abstract | Private | TCGen
-    deriving (Show, Eq)
+    deriving (Show, Eq, Data, Typeable)
 
 type FnOpts = [FnOpt]
 
@@ -327,19 +329,28 @@ data PDecl' t = PFix     FC Fixity [String] -- fixity declaration
                                         t -- full instance type
                                         [PDecl' t]
               | PSyntax  FC Syntax
-              | PDirective (Idris ())
-    deriving Functor
+              | PDirective Directive
+    deriving (Functor, Data, Typeable)
+
+data Directive = Lib String
+               | Link String
+               | Include String
+               | Hide Name
+               | Freeze Name
+               | Access Accessibility
+               | Logging Integer
+    deriving (Show, Eq, Data, Typeable)
 
 data PClause' t = PClause Name t [t] t [PDecl' t]
                 | PWith   Name t [t] t [PDecl' t]
                 | PClauseR       [t] t [PDecl' t]
                 | PWithR         [t] t [PDecl' t]
-    deriving Functor
+    deriving (Functor, Data, Typeable)
 
 data PData' t  = PDatadecl { d_name :: Name,
                              d_tcon :: t,
                              d_cons :: [(Name, t, FC)] }
-    deriving Functor
+    deriving (Functor, Data, Typeable)
 
 -- Handy to get a free function for applying PTerm -> PTerm functions
 -- across a program, by deriving Functor
@@ -410,7 +421,7 @@ data PTerm = PQuote Raw
            | PTactics [PTactic] -- as PProof, but no auto solving
            | PElabError String -- error to report on elaboration
            | PImpossible -- special case for declaring when an LHS can't typecheck
-    deriving Eq
+    deriving (Eq, Data, Typeable)
 {-! 
 deriving instance Binary PTerm 
 !-}
@@ -442,7 +453,7 @@ data PTactic' t = Intro [Name] | Focus Name
                 | Try (PTactic' t) (PTactic' t)
                 | TSeq (PTactic' t) (PTactic' t)
                 | Qed
-    deriving (Show, Eq, Functor)
+    deriving (Show, Eq, Functor, Data, Typeable)
 {-! 
 deriving instance Binary PTactic' 
 !-}
@@ -454,7 +465,7 @@ data PDo' t = DoExp  FC t
             | DoBindP FC t t
             | DoLet  FC Name t t
             | DoLetP FC t t
-    deriving (Eq, Functor)
+    deriving (Eq, Functor, Data, Typeable)
 {-! 
 deriving instance Binary PDo' 
 !-}
@@ -471,7 +482,7 @@ data PArg' t = PImp { priority :: Int,
                       lazyarg :: Bool, getTm :: t }
              | PConstraint { priority :: Int,
                              lazyarg :: Bool, getTm :: t }
-    deriving (Show, Eq, Functor)
+    deriving (Eq, Show, Functor, Data, Typeable)
 {-! 
 deriving instance Binary PArg' 
 !-}
@@ -488,7 +499,7 @@ data ClassInfo = CI { instanceName :: Name,
                       class_methods :: [(Name, PTerm)],
                       class_defaults :: [(Name, Name)], -- method name -> default impl
                       class_params :: [Name] }
-    deriving Show
+    deriving (Eq, Show, Data, Typeable)
 {-! 
 deriving instance Binary ClassInfo 
 !-}
@@ -504,16 +515,16 @@ data DSL = DSL { dsl_bind    :: PTerm,
                  dsl_lambda  :: Maybe PTerm,
                  dsl_let     :: Maybe PTerm
                }
-    deriving Show
+    deriving (Eq, Show, Data, Typeable)
 
 data SynContext = PatternSyntax | TermSyntax | AnySyntax
-    deriving Show
+    deriving (Eq, Show, Data, Typeable)
 {-! 
 deriving instance Binary SynContext 
 !-}
 
 data Syntax = Rule [SSymbol] PTerm SynContext
-    deriving Show
+    deriving (Eq, Show, Data, Typeable)
 {-! 
 deriving instance Binary Syntax 
 !-}
@@ -521,7 +532,7 @@ deriving instance Binary Syntax
 data SSymbol = Keyword Name
              | Symbol String
              | Expr Name
-    deriving Show
+    deriving (Eq, Show, Data, Typeable)
 {-! 
 deriving instance Binary SSymbol 
 !-}
@@ -540,12 +551,11 @@ data SyntaxInfo = Syn { using :: [(Name, PTerm)],
                         syn_params :: [(Name, PTerm)],
                         syn_namespace :: [String],
                         no_imp :: [Name],
-                        decoration :: Name -> Name,
                         inPattern :: Bool,
                         dsl_info :: DSL }
-    deriving Show
+    deriving (Show, Data, Typeable)
 
-defaultSyntax = Syn [] [] [] [] id False initDSL
+defaultSyntax = Syn [] [] [] [] False initDSL
 
 --- Pretty printing declarations and terms
 

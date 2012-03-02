@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, PatternGuards #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, PatternGuards, DeriveDataTypeable #-}
 
 {- Implements a proof state, some primitive tactics for manipulating
    proofs, and some high level commands for introducing new theorems,
@@ -16,6 +16,7 @@ import Control.Monad.State
 import Control.Applicative
 import Data.List
 import Debug.Trace
+import Data.Data(Data, Typeable)
 
 data ProofState = PS { thname   :: Name,
                        holes    :: [Name], -- holes still to be solved
@@ -35,6 +36,7 @@ data ProofState = PS { thname   :: Name,
 data Goal = GD { premises :: Env,
                  goalType :: Binder Term
                }
+    deriving (Show, Eq, Data, Typeable)
 
 data Tactic = Attack
             | Claim Name Raw
@@ -64,7 +66,10 @@ data Tactic = Attack
             | ProofState
             | Undo
             | QED
-    deriving Show
+            | Apply Raw [Bool]
+            | Arg Name Name
+            | Patvar Name
+    deriving (Show, Eq, Data, Typeable)
 
 -- Some utilites on proof and tactic states
 

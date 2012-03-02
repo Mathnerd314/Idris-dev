@@ -1,5 +1,5 @@
 {-# LANGUAGE MultiParamTypeClasses, FlexibleInstances,
-             PatternGuards #-}
+             PatternGuards, DeriveDataTypeable #-}
 
 module Core.Evaluate(normalise, normaliseC, normaliseAll,
                 simplify, specialise, hnf,
@@ -14,6 +14,7 @@ import Debug.Trace
 import Control.Monad.State
 import qualified Data.Binary as B
 import Data.Binary hiding (get, put)
+import Data.Data(Data, Typeable)
 
 import Core.TT
 import Core.CaseTree
@@ -22,7 +23,7 @@ type EvalState = ()
 type Eval a = State EvalState a
 
 data EvalOpt = Spec | HNF | Simplify | AtREPL
-  deriving (Show, Eq)
+  deriving (Show, Eq, Data, Typeable)
 
 -- VALUES (as HOAS) ---------------------------------------------------------
 
@@ -460,7 +461,7 @@ instance Binary (a -> b) where
 -- Hidden => doesn't reduce and invisible to type checker
 
 data Accessibility = Public | Frozen | Hidden
-    deriving (Show, Eq)
+    deriving (Show, Eq, Data, Typeable)
 {-!
 deriving instance Binary Accessibility
 !-}

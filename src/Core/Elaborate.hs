@@ -26,7 +26,7 @@ data Command = Theorem Name Raw
              | Eval Raw
              | Quit
              | Print Name
-             | Tac (Elab ())
+             | Tac Tactic
 
 data ElabState aux = ES (ProofState, aux) String (Maybe (ElabState aux))
   deriving Show
@@ -135,9 +135,9 @@ get_instances = do ES p _ _ <- get
 
 -- given a desired hole name, return a unique hole name
 unique_hole :: Name -> Elab' aux Name
-unique_hole n = do ES p _ _ <- get
-                   let bs = bound_in (pterm (fst p)) ++ bound_in (ptype (fst p))
-                   n' <- uniqueNameCtxt (context (fst p)) n (holes (fst p) ++ bs)
+unique_hole n = do ES (ps,_) _ _ <- get
+                   let bs = bound_in (pterm ps) ++ bound_in (ptype ps)
+                   n' <- uniqueNameCtxt (context ps) n (holes ps ++ bs)
                    return n'
   where
     bound_in (Bind n b sc) = n : bi b ++ bound_in sc
@@ -166,9 +166,6 @@ attack = processTactic' Attack
 claim :: Name -> Raw -> Elab' aux ()
 claim n t = processTactic' (Claim n t)
 
-exact :: Raw -> Elab' aux ()
-exact t = processTactic' (Exact t)
-
 fill :: Raw -> Elab' aux ()
 fill t = processTactic' (Fill t)
 
@@ -187,17 +184,8 @@ start_unify n = processTactic' (StartUnify n)
 end_unify :: Elab' aux ()
 end_unify = processTactic' EndUnify
 
-regret :: Elab' aux ()
-regret = processTactic' Regret
-
 compute :: Elab' aux ()
 compute = processTactic' Compute
-
-eval_in :: Raw -> Elab' aux ()
-eval_in t = processTactic' (EvalIn t)
-
-check_in :: Raw -> Elab' aux ()
-check_in t = processTactic' (CheckIn t)
 
 intro :: Maybe Name -> Elab' aux ()
 intro n = processTactic' (Intro n)
@@ -238,20 +226,6 @@ defer n = do n' <- unique_hole n
 
 instanceArg :: Name -> Elab' aux ()
 instanceArg n = processTactic' (Instance n)
-
-proofstate :: Elab' aux ()
-proofstate = processTactic' ProofState
-
-reorder_claims :: Name -> Elab' aux ()
-reorder_claims n = processTactic' (Reorder n)
-
-qed :: Elab' aux Term
-qed = do processTactic' QED
-         ES p _ _ <- get
-         return (pterm (fst p))
-
-undo :: Elab' aux ()
-undo = processTactic' Undo
 
 prepare_apply :: Raw -> [(Bool, Int)] -> Elab' aux [Name]
 prepare_apply fn imps =

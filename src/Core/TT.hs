@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, DeriveFunctor #-}
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, DeriveFunctor, DeriveDataTypeable #-}
 
 module Core.TT where
 
@@ -9,6 +9,7 @@ import Data.Char
 import Data.List
 import qualified Data.Binary as B
 import Data.Binary hiding (get, put)
+import Data.Data(Data, Typeable)
 
 {- The language has:
    * Full dependent types
@@ -25,11 +26,11 @@ import Data.Binary hiding (get, put)
 
 data Option = SetInSet
             | CheckConv
-  deriving Eq
+  deriving (Eq, Data, Typeable)
 
 data FC = FC { fc_fname :: String,
                fc_line :: Int }
-    deriving Eq
+    deriving (Eq, Data, Typeable)
 {-! 
 deriving instance Binary FC 
 !-}
@@ -44,14 +45,14 @@ data Err = Msg String
          | UniverseError
          | ProgramLineComment
          | At FC Err
-  deriving Eq
+  deriving (Eq, Data, Typeable)
 
 instance Show Err where
     show (Msg s) = s
 
 data TC a = OK a
           | Error Err
-  deriving (Eq, Functor)
+  deriving (Eq, Functor, Data, Typeable)
 
 instance Show a => Show (TC a) where
     show (OK x) = show x
@@ -102,7 +103,7 @@ traceWhen False _  a = a
 data Name = UN String
           | NS Name [String] -- root, namespaces 
           | MN Int String
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Data, Typeable)
 {-! 
 deriving instance Binary Name 
 !-}
@@ -174,7 +175,7 @@ addAlist ((n, tm) : ds) ctxt = addDef n tm (addAlist ds ctxt)
 data Const = I Int | BI Integer | Fl Double | Ch Char | Str String 
            | IType | BIType     | FlType    | ChType  | StrType    
            | PtrType
-  deriving Eq
+  deriving (Eq, Data, Typeable)
 {-! 
 deriving instance Binary Const 
 !-}
@@ -184,7 +185,7 @@ data Raw = Var Name
          | RApp Raw Raw
          | RSet
          | RConstant Const
-  deriving (Show, Eq)
+  deriving (Show, Eq, Data, Typeable)
 {-! 
 deriving instance Binary Raw 
 !-}
@@ -201,7 +202,7 @@ data Binder b = Lam   { binderTy  :: b }
                         binderVal :: b }
               | PVar  { binderTy  :: b }
               | PVTy  { binderTy  :: b }
-  deriving (Show, Eq, Functor)
+  deriving (Show, Eq, Functor, Data, Typeable)
 {-! 
 deriving instance Binary Binder 
 !-}
@@ -224,15 +225,15 @@ raw_apply f (a : as) = raw_apply (RApp f a) as
 data RawFun = RawFun { rtype :: Raw,
                        rval  :: Raw
                      }
-  deriving Show
+  deriving (Show, Data, Typeable)
 
 data RawDatatype = RDatatype Name Raw [(Name, Raw)]
-  deriving Show
+  deriving (Show, Data, Typeable)
 
 data RDef = RFunction RawFun
           | RConst Raw
           | RData RawDatatype
-  deriving Show
+  deriving (Show, Data, Typeable)
 
 type RProgram = [(Name, RDef)]
 
@@ -240,7 +241,7 @@ type RProgram = [(Name, RDef)]
 
 data UExp = UVar Int -- universe variable
           | UVal Int -- explicit universe level
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Data, Typeable)
 
 -- We assume that universe levels have been checked, so anything external
 -- can just have the same universe variable and we won't get any new
@@ -258,7 +259,7 @@ instance Show UExp where
 
 data UConstraint = ULT UExp UExp
                  | ULE UExp UExp
-  deriving Eq
+  deriving (Eq, Data, Typeable)
 
 instance Show UConstraint where
     show (ULT x y) = show x ++ " < " ++ show y
@@ -267,7 +268,7 @@ instance Show UConstraint where
 type UCs = (Int, [UConstraint])
 
 data NameType = Bound | Ref | DCon Int Int | TCon Int Int
-  deriving (Show, Eq)
+  deriving (Show, Eq, Data, Typeable)
 {-! 
 deriving instance Binary NameType 
 !-}
@@ -278,7 +279,7 @@ data TT n = P NameType n (TT n) -- embed type
           | App (TT n) (TT n) -- function, function type, arg
           | Constant Const
           | Set UExp
-  deriving Functor
+  deriving (Functor, Data, Typeable)
 {-! 
 deriving instance Binary TT 
 !-}
@@ -289,7 +290,7 @@ data Datatype n = Data { d_typename :: n,
                          d_typetag  :: Int,
                          d_type     :: (TT n),
                          d_cons     :: [(n, TT n)] }
-  deriving (Show, Functor, Eq)
+  deriving (Show, Functor, Eq, Data, Typeable)
 
 instance Eq n => Eq (TT n) where
     (==) (P xt x _)     (P yt y _)     = xt == yt && x == y

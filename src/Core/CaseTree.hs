@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+
 module Core.CaseTree(CaseDef(..), SC(..), CaseAlt(..), CaseTree,
                      simpleCase, small) where
 
@@ -5,14 +7,16 @@ import Core.TT
 
 import Control.Monad.State
 import Debug.Trace
+import Data.Data(Data, Typeable)
 
 data CaseDef = CaseDef [Name] SC
-    deriving Show
+    deriving (Show, Eq, Data, Typeable)
+
 
 data SC = Case Name [CaseAlt]
         | STerm Term
         | UnmatchedCase String -- error message
-    deriving Show
+    deriving (Show, Eq, Data, Typeable)
 {-! 
 deriving instance Binary SC 
 !-}
@@ -20,7 +24,7 @@ deriving instance Binary SC
 data CaseAlt = ConCase Name Int [Name] SC
              | ConstCase Const         SC
              | DefaultCase             SC
-    deriving Show
+    deriving (Show, Eq, Data, Typeable)
 {-! 
 deriving instance Binary CaseAlt 
 !-}
@@ -46,7 +50,7 @@ data Pat = PCon Name Int [Pat]
          | PConst Const
          | PV Name
          | PAny
-    deriving Show
+    deriving (Show, Eq, Data, Typeable)
 
 -- If there are repeated variables, take the *last* one (could be name shadowing
 -- in a where clause, so take the most recent).
@@ -84,6 +88,7 @@ toPat tc tms = evalState (mapM (\x -> toPat' x []) tms) []
 
 data Partition = Cons [Clause]
                | Vars [Clause]
+    deriving (Show, Eq, Data, Typeable)
 
 isVarPat (PV _ : ps , _) = True
 isVarPat (PAny : ps , _) = True
@@ -116,9 +121,11 @@ mixture vs (Vars ms : ps) err = do fallthrough <- mixture vs ps err
 
 data ConType = CName Name Int -- named constructor
              | CConst Const -- constant, not implemented yet
+    deriving (Show, Eq, Data, Typeable)
 
 data Group = ConGroup ConType -- Constructor
                       [([Pat], Clause)] -- arguments and rest of alternative
+    deriving (Show, Eq, Data, Typeable)
 
 conRule :: [Name] -> [Clause] -> SC -> State CS SC
 conRule (v:vs) cs err = do groups <- groupCons cs

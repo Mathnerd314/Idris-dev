@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+
 module Idris.ElabTerm where
 
 import Idris.AbsSyntax
@@ -9,6 +11,7 @@ import Core.Evaluate
 import Control.Monad
 import Control.Monad.State
 import Data.List
+import Data.Data(Data, Typeable)
 import Debug.Trace
 
 -- Data to pass to recursively called elaborators; e.g. for where blocks,
@@ -16,10 +19,10 @@ import Debug.Trace
 
 data ElabInfo = EInfo { params :: [(Name, PTerm)],
                         inblock :: Ctxt [Name], -- names in the block, and their params
-                        liftname :: Name -> Name,
                         namespace :: Maybe [String] }
+            deriving (Data, Typeable)
 
-toplevel = EInfo [] emptyContext id Nothing
+toplevel = EInfo [] emptyContext Nothing
 
 type ElabD a = Elab' [PDecl] a
 

@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 module Idris.Imports where
 
 import Idris.AbsSyntax
@@ -8,9 +9,10 @@ import Paths_idris
 import System.FilePath
 import System.Directory
 import Control.Monad.State
+import Data.Data(Data, Typeable)
 
 data IFileType = IDR FilePath | LIDR FilePath | IBC FilePath IFileType 
-    deriving Eq
+    deriving (Eq, Data, Typeable)
 
 srcPath :: FilePath -> FilePath
 srcPath fp = let (n, ext) = splitExtension fp in

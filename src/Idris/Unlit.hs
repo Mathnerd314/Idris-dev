@@ -1,7 +1,10 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+
 module Idris.Unlit(unlit) where
 
 import Core.TT
 import Data.Char
+import Data.Data(Data, Typeable)
 
 unlit :: FilePath -> String -> TC String
 unlit f s = do let s' = map ulLine (lines s)
@@ -9,6 +12,7 @@ unlit f s = do let s' = map ulLine (lines s)
                return $ unlines (map snd s')
 
 data LineType = Prog | Blank | Comm
+  deriving (Data, Typeable)
 
 ulLine ('>':' ':xs)        = (Prog, xs)
 ulLine ('>':xs)            = (Prog, xs)

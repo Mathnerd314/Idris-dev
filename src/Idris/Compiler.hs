@@ -2,7 +2,7 @@
 
 module Idris.Compiler where
 
-import Idris.AbsSyntax
+import Idris.AbsSyntax hiding (Include)
 
 import Core.TT
 import Core.Evaluate

@@ -982,11 +982,11 @@ pClause syn
                    ist <- getState
                    let ctxt = tt_ctxt ist
                    let wsyn = syn { syn_namespace = [] }
-                   (wheres, nmap) <- choice [do x <- pWhereblock n wsyn
-                                                pop_indent
-                                                return x, 
-                                             do pTerminator
-                                                return ([], [])]
+                   wheres <- choice [do x <- pWhereblock n wsyn
+                                        pop_indent
+                                        return x
+                                    ,do pTerminator
+                                        return []]
                    let capp = PApp fc (PRef fc n) 
                                 (iargs ++ cargs ++ map pexp args)
                    ist <- getState
@@ -1001,11 +1001,11 @@ pClause syn
                    rhs <- pRHS syn n
                    let ctxt = tt_ctxt ist
                    let wsyn = syn { syn_namespace = [] }
-                   (wheres, nmap) <- choice [do x <- pWhereblock n wsyn
-                                                pop_indent
-                                                return x, 
-                                             do pTerminator
-                                                return ([], [])]
+                   wheres <- choice [do x <- pWhereblock n wsyn
+                                        pop_indent
+                                        return x
+                                    ,do pTerminator
+                                        return []]
                    return $ PClauseR wargs rhs wheres)
 
        <|> try (do push_indent
@@ -1046,11 +1046,11 @@ pClause syn
               wargs <- many (pWExpr syn)
               rhs <- pRHS syn n
               let wsyn = syn { syn_namespace = [] }
-              (wheres, nmap) <- choice [do x <- pWhereblock n wsyn
-                                           pop_indent
-                                           return x, 
-                                        do pTerminator
-                                           return ([], [])]
+              wheres <- choice [do x <- pWhereblock n wsyn
+                                   pop_indent
+                                   return x
+                               ,do pTerminator
+                                   return []]
               ist <- getState
               let capp = PApp fc (PRef fc n) [pexp l, pexp r]
               setState (ist { lastParse = Just n })
@@ -1086,37 +1086,28 @@ pClause syn
 pWExpr :: SyntaxInfo -> IParser PTerm
 pWExpr syn = do lchar '|'; pExpr' syn
 
-pWhereblock :: Name -> SyntaxInfo -> IParser ([PDecl], [(Name, Name)])
+pWhereblock :: Name -> SyntaxInfo -> IParser [PDecl]
 pWhereblock n syn 
     = do reserved "where"; open_block
          ds <- many1 $ pFunDecl syn
-         let dns = concatMap (concatMap declared) ds
          close_block
-         return (concat ds, map (\x -> (x, decoration syn x)) dns)
+         return (concat ds)
 
 pDirective :: IParser [PDecl]
 pDirective = try (do lchar '%'; reserved "lib"; lib <- strlit;
-                     return [PDirective (do addLib lib
-                                            addIBC (IBCLib lib))])
+                     return [PDirective (Lib lib)])
          <|> try (do lchar '%'; reserved "link"; obj <- strlit;
-                     return [PDirective (do datadir <- liftIO $ getDataDir
-                                            o <- liftIO $ findInPath [".", datadir] obj
-                                            addIBC (IBCObj o)
-                                            addObjectFile o)])
+                     return [PDirective (Link obj)])
          <|> try (do lchar '%'; reserved "include"; hdr <- strlit;
-                     return [PDirective (do addHdr hdr
-                                            addIBC (IBCHeader hdr))])
+                     return [PDirective (Include hdr)])
          <|> try (do lchar '%'; reserved "hide"; n <- iName []
-                     return [PDirective (do setAccessibility n Hidden
-                                            addIBC (IBCAccess n Hidden))])
+                     return [PDirective (Hide n)])
          <|> try (do lchar '%'; reserved "freeze"; n <- iName []
-                     return [PDirective (do setAccessibility n Frozen
-                                            addIBC (IBCAccess n Frozen))])
+                     return [PDirective (Freeze n)])
          <|> try (do lchar '%'; reserved "access"; acc <- pAccessibility'
-                     return [PDirective (do i <- getIState
-                                            putIState (i { default_access = acc }))])
+                     return [PDirective (Access acc)])
          <|> do lchar '%'; reserved "logging"; i <- natural;
-                return [PDirective (setLogLevel (fromInteger i))] 
+                return [PDirective (Logging i)] 
 
 pTactic :: SyntaxInfo -> IParser PTactic
 pTactic syn = do reserved "intro"; ns <- sepBy pName (lchar ',')

@@ -43,29 +43,29 @@ pCommand = do reserved "theorem"; n <- iName []; lchar ':'; ty <- pTerm
        <|> do reserved "quit";
               return Quit
 
-pTactic :: Parser (Elab ())
-pTactic = do reserved "attack";  return attack
+pTactic :: Parser Tactic
+pTactic = do reserved "attack";  return Attack
       <|> do reserved "claim";   n <- iName []; lchar ':'; ty <- pTerm
-             return (claim n ty)
-      <|> do reserved "regret";  return regret
-      <|> do reserved "exact";   tm <- pTerm; return (exact tm)
-      <|> do reserved "fill";    tm <- pTerm; return (fill tm)
+             return (Claim n ty)
+      <|> do reserved "regret";  return Regret
+      <|> do reserved "exact";   tm <- pTerm; return (Exact tm)
+      <|> do reserved "fill";    tm <- pTerm; return (Fill tm)
       <|> do reserved "apply";   tm <- pTerm; args <- many pArgType; 
-             return (discard (apply tm (map (\x -> (x,0)) args)))
-      <|> do reserved "solve";   return solve
-      <|> do reserved "compute"; return compute
-      <|> do reserved "intro";   n <- iName []; return (intro (Just n))
+             return (Apply tm args)
+      <|> do reserved "solve";   return Solve
+      <|> do reserved "compute"; return Compute
+      <|> do reserved "intro";   n <- iName []; return (Intro (Just n))
       <|> do reserved "forall";  n <- iName []; lchar ':'; ty <- pTerm
-             return (forall n ty)
-      <|> do reserved "arg";     n <- iName []; t <- iName []; return (arg n t)
-      <|> do reserved "patvar";  n <- iName []; return (patvar n)
+             return (Forall n ty)
+      <|> do reserved "arg";     n <- iName []; t <- iName []; return (Arg n t)
+      <|> do reserved "patvar";  n <- iName []; return (Patvar n)
 --       <|> do reserved "patarg";  n <- iName []; t <- iName []; return (patarg n t)
-      <|> do reserved "eval";    t <- pTerm; return (eval_in t)
-      <|> do reserved "check";   t <- pTerm; return (check_in t)
-      <|> do reserved "focus";   n <- iName []; return (focus n)
-      <|> do reserved "state";   return proofstate
-      <|> do reserved "undo";    return undo
-      <|> do reserved "qed";     return (discard qed)
+      <|> do reserved "eval";    t <- pTerm; return (EvalIn t)
+      <|> do reserved "check";   t <- pTerm; return (CheckIn t)
+      <|> do reserved "focus";   n <- iName []; return (Focus n)
+      <|> do reserved "state";   return ProofState
+      <|> do reserved "undo";    return Undo
+      <|> do reserved "qed";     return QED
 
 pArgType :: Parser Bool
 pArgType = do lchar '_'; return True   -- implicit (machine fills in)

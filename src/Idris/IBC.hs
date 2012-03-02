@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE TypeSynonymInstances, DeriveDataTypeable #-}
 
 module Idris.IBC where
 
@@ -13,6 +13,7 @@ import Data.Binary
 import Data.List
 import Data.ByteString.Lazy as B hiding (length, elem)
 -- import Data.DeriveTH
+import Data.Data(Data, Typeable)
 import Control.Monad
 import Control.Monad.State hiding (get, put)
 import System.FilePath
