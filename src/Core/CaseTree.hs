@@ -1,15 +1,17 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module Core.CaseTree(CaseDef(..), SC(..), CaseAlt(..), CaseTree,
-                     simpleCase, small) where
+                     simpleCase, small, namesUsed) where
 
 import Core.TT
 
 import Control.Monad.State
+import Data.Maybe
+import Data.List hiding (partition)
 import Debug.Trace
 import Data.Data(Data, Typeable)
 
-data CaseDef = CaseDef [Name] SC
+data CaseDef = CaseDef [Name] SC [Term]
     deriving (Show, Eq, Data, Typeable)
 
 
@@ -30,21 +32,43 @@ deriving instance Binary CaseAlt
 !-}
 
 type CaseTree = SC
-type Clause   = ([Pat], Term)
-type CS = Int
+type Clause   = ([Pat], (Term, Term))
+type CS = ([Term], Int)
 
 -- simple terms can be inlined trivially - good for primitives in particular
 small :: SC -> Bool
-small (STerm t) = True
+-- small (STerm t) = True
 small _ = False
 
-simpleCase :: Bool -> [(Term, Term)] -> CaseDef
-simpleCase tc [] = CaseDef [] (UnmatchedCase "No pattern clauses")
-simpleCase tc cs = let pats    = map (\ (l, r) -> (toPats tc l, r)) cs
-                       numargs = length (fst (head pats)) 
-                       ns      = take numargs args in
-                       CaseDef ns (evalState (match ns pats (UnmatchedCase "Error")) numargs)
+namesUsed :: SC -> [Name]
+namesUsed sc = nub $ nu' [] sc where
+    nu' ps (Case n alts) = nub (concatMap (nua ps) alts) \\ [n]
+    nu' ps (STerm t)     = nub $ nut ps t
+    nu' ps _ = []
+
+    nua ps (ConCase n i args sc) = nub (nu' (ps ++ args) sc) \\ args
+    nua ps (ConstCase _ sc) = nu' ps sc
+    nua ps (DefaultCase sc) = nu' ps sc
+
+    nut ps (P _ n _) | n `elem` ps = []
+                     | otherwise = [n]
+    nut ps (App f a) = nut ps f ++ nut ps a
+    nut ps (Bind n (Let t v) sc) = nut ps v ++ nut (n:ps) sc
+    nut ps (Bind n b sc) = nut (n:ps) sc
+    nut ps _ = []
+
+simpleCase :: Bool -> Bool -> [(Term, Term)] -> CaseDef
+simpleCase tc cover [] 
+                 = CaseDef [] (UnmatchedCase "No pattern clauses") []
+simpleCase tc cover cs 
+      = let pats       = map (\ (l, r) -> (toPats tc l, (l, r))) cs
+            numargs    = length (fst (head pats)) 
+            ns         = take numargs args
+            (tree, st) = runState (match ns pats (defaultCase cover)) ([], numargs) in
+            CaseDef ns (prune tree) (fst st)
     where args = map (\i -> MN i "e") [0..]
+          defaultCase True = STerm Erased
+          defaultCase False = UnmatchedCase "Error"
 
 data Pat = PCon Name Int [Pat]
          | PConst Const
@@ -109,8 +133,12 @@ partition xs = error $ "Partition " ++ show xs
 
 match :: [Name] -> [Clause] -> SC -- error case
                             -> State CS SC
-match [] (([], ret) : _) err = return $ STerm ret -- run out of arguments
-match vs cs err = mixture vs (partition cs) err
+match [] (([], ret) : xs) err 
+    = do (ts, v) <- get
+         put (ts ++ (map (fst.snd) xs), v)
+         return $ STerm (snd ret) -- run out of arguments
+match vs cs err = do cs <- mixture vs (partition cs) err
+                     return cs
 
 mixture :: [Name] -> [Partition] -> SC -> State CS SC
 mixture vs [] err = return err
@@ -168,7 +196,7 @@ argsToAlt rs@((r, m) : _)
     addRs ((r, (ps, res)) : rs) = ((r++ps, res) : addRs rs)
 
 getVar :: State CS Name
-getVar = do v <- get; put (v+1); return (MN v "e")
+getVar = do (t, v) <- get; put (t, v+1); return (MN v "e")
 
 groupCons :: [Clause] -> State CS [Group]
 groupCons cs = gc [] cs
@@ -197,24 +225,22 @@ varRule (v : vs) alts err =
     do let alts' = map (repVar v) alts
        match vs alts' err
   where
-    repVar v (PV p : ps , res) = (ps, subst p (P Bound v (V 0)) res)
+    repVar v (PV p : ps , (lhs, res)) = (ps, (lhs, subst p (P Bound v (V 0)) res))
     repVar v (PAny : ps , res) = (ps, res)
 
-{-
-mkOperator :: CaseDef -> [Value] -> Maybe Value
-mkOperator (CaseDef ns casetree) args 
-    | length args /= length ns = Nothing
-    | otherwise = evalArgs (zip ns args) casetree
-  where
-    evalArgs map (Case n alts) = 
-        do v <- lookup n map
-           (altmap, tm) <- findAlt (getValArgs v) alts map
-           evalArgs altmap tm
-    evalArgs map (STerm tm) = 
-    evalArgs map (UnmatchedCase _) = Nothing
+prune :: SC -> SC
+prune (Case n alts) 
+    = let alts' = map pruneAlt $ 
+                      filter notErased alts in
+          case alts' of
+            [] -> STerm Erased
+            as  -> Case n as
+    where pruneAlt (ConCase cn i ns sc) = ConCase cn i ns (prune sc)
+          pruneAlt (ConstCase c sc) = ConstCase c (prune sc)
+          pruneAlt (DefaultCase sc) = DefaultCase (prune sc)
 
-    getValArgs tm = getValArgs' tm []
-    getValArgs' (VApp f a) as = getValArgs' f (a:as)
-    getValArgs' f as = (f, as)
+          notErased (DefaultCase (STerm Erased)) = False
+          notErased _ = True
+prune t = t
 
--}
+

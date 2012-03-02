@@ -41,6 +41,8 @@ data Opt = Filename String
          | Output String
          | TypeCase
          | TypeInType
+         | NoCoverage 
+         | Verbose
     deriving (Eq, Data, Typeable)
 
 main = do xs <- getArgs
@@ -55,6 +57,8 @@ runIdris opts =
        when (Ver `elem` opts) $ liftIO showver
        when (Usage `elem` opts) $ liftIO usage
        setREPL runrepl
+       setVerbose runrepl
+       when (Verbose `elem` opts) $ setVerbose True
        mapM_ makeOption opts
        elabPrims
        when (not (NoPrelude `elem` opts)) $ do x <- loadModule "prelude"
@@ -65,7 +69,7 @@ runIdris opts =
        ok <- noErrors
        when ok $ case output of
                     [] -> return ()
-                    (o:_) -> process (Compile o)  
+                    (o:_) -> process "" (Compile o)  
        when runrepl $ repl ist inputs
        ok <- noErrors
        when (not ok) $ liftIO (exitWith (ExitFailure 1))
@@ -73,6 +77,7 @@ runIdris opts =
     makeOption (OLogging i) = setLogLevel i
     makeOption TypeCase = setTypeCase True
     makeOption TypeInType = setTypeInType True
+    makeOption NoCoverage = setCoverage False
     makeOption _ = return ()
 
 getFile :: Opt -> Maybe String
@@ -100,8 +105,10 @@ parseArgs ("--check":ns)     = liftM (NoREPL : ) (parseArgs ns)
 parseArgs ("-o":n:ns)        = liftM (\x -> NoREPL : Output n : x) (parseArgs ns)
 parseArgs ("--typecase":ns)  = liftM (TypeCase : ) (parseArgs ns)
 parseArgs ("--typeintype":ns) = liftM (TypeInType : ) (parseArgs ns)
+parseArgs ("--nocoverage":ns) = liftM (NoCoverage : ) (parseArgs ns)
 parseArgs ("--help":ns)      = liftM (Usage : ) (parseArgs ns)
 parseArgs ("--version":ns)   = liftM (Ver : ) (parseArgs ns)
+parseArgs ("--verbose":ns)   = liftM (Verbose : ) (parseArgs ns)
 parseArgs (n:ns)             = liftM (Filename n : ) (parseArgs ns)
 
 ver = showVersion version

@@ -1,10 +1,76 @@
 \section{Miscellany}
 
-In this section we discuss a variety of additional features: extensible syntax,
-literate programming, and interfacing with external libraries through the
-foriegn function interface.
+In this section we discuss a variety of additional features:
+auto implicit and default 
+arguments, literate programming, interfacing with external libraries through the
+foriegn function interface, and the universe hierarchy.
 
-\input{syntax}
+\subsection{Auto implicit arguments}
+
+We have already seen implicit arguments, which allows arguments to be omitted when
+they can be inferred by the type checker, e.g.
+
+\useverb{vlookupimpty}
+
+\noindent
+In other situations, it may be possible to infer arguments not by type checking but
+by searching the context for an appropriate value, or constructing a proof. For example,
+the following definition of \texttt{head} which requires a proof that the list is
+non-empty
+
+\begin{SaveVerbatim}{safehead}
+
+isCons : List a -> Bool
+isCons [] = False
+isCons (x :: xs) = True
+
+head : (xs : List a) -> (isCons xs = True) -> a
+head (x :: xs) _ = x
+
+\end{SaveVerbatim}
+\useverb{safehead} 
+
+\noindent
+If the list is statically known to be non-empty, either because its value is known or
+because a proof already exists in the context, the proof can be constructed
+automatically. Auto implicit arguments allow this to happen silently. We define
+\texttt{head} as follows:
+
+\begin{SaveVerbatim}{headauto}
+
+head : (xs : List a) -> {auto p : isCons xs = True} -> a
+head (x :: xs) = x
+
+\end{SaveVerbatim}
+\useverb{headauto} 
+
+\noindent
+The \texttt{auto} annotation on the implicit argument means that \Idris{} will
+attempt to fill in the implicit argument using the \texttt{trivial} tactic, which
+searches through the context for a proof, and tries to solve with \texttt{refl}
+if a proof is not found.
+Now when \texttt{head} is applied, the proof can be omitted. In the case that a proof
+is not found, it can be provided explicitly as normal:
+
+\begin{SaveVerbatim}{headapp}
+
+head xs {p = ?headProof} 
+
+\end{SaveVerbatim}
+\useverb{headapp} 
+
+\noindent
+More generally, we can fill in implicit arguments with a default value by annotating
+them with \texttt{default}. The definition above is equivalent to:
+
+\begin{SaveVerbatim}{defimp}
+
+head : (xs : List a) -> 
+       {default proof { trivial; } p : isCons xs = True} -> a
+head (x :: xs) = x
+
+\end{SaveVerbatim}
+\useverb{defimp} 
 
 \subsection{Literate programming}
 
@@ -129,8 +195,70 @@ This is made possible through the following directives:
 \item \texttt{\%lib "x"} --- include the \texttt{libx} library, equivalent to passing the
 \texttt{-lx} option to \texttt{gcc}.
 \item \texttt{\%include "x.h"} --- use the header file \texttt{x.h}.
-\item \texttt{\%obj "x.o"} --- link with the object file \texttt{x.o}.
+\item \texttt{\%link "x.o"} --- link with the object file \texttt{x.o}.
 \end{itemize}
+
+\subsection{Cumulativity}
+
+Since values can appear in types and \emph{vice versa}, it is natural that types themselves
+have types. For example:
+
+\begin{SaveVerbatim}{typetypes}
+
+*universe> :t Nat
+Nat : Set
+*universe> :t Vect
+Vect : Set -> Nat -> Set
+
+\end{SaveVerbatim}
+\useverb{typetypes} 
+
+\noindent
+But what about the type of \texttt{Set}? If we ask \Idris{} it reports
+
+\begin{SaveVerbatim}{setset}
+
+*universe> :t Set
+Set : Set
+
+\end{SaveVerbatim}
+\useverb{setset} 
+
+\noindent
+It \emph{appears} that \texttt{Set} is its own type. This would lead to an inconsitency
+due to Girard's paradox~\cite{girard-thesis}, so internally there is a \emph{hierarchy}
+of types (or \emph{universes}):
+
+\begin{SaveVerbatim}{sethierarchy}
+
+Set : Set 1 : Set 2 : Set 3 : ...
+
+\end{SaveVerbatim}
+\useverb{sethierarchy} 
+
+\noindent
+Universes are \emph{cumulative}, that is, if \texttt{x : Set n} we can also have that
+\texttt{x : Set m}, as long as \texttt{n < m}. 
+The typechecker generates such universe 
+constraints and reports an error if any inconsistencies are found. Ordinarily, a
+programmer does not need to worry about this, but it does prevent (contrived)
+programs such as the following:
+
+\begin{SaveVerbatim}{idid}
+
+myid : (a : Set) -> a -> a
+myid _ x = x
+
+idid :  (a : Set) -> a -> a
+idid = myid _ myid
+
+\end{SaveVerbatim}
+\useverb{idid} 
+
+\noindent
+The application of \texttt{myid} to itself leads to a cycle in the universe hierarchy
+--- \texttt{myid}'s first argument is a \texttt{Set}, which cannot be at a lower level
+than required if it is applied to itself.
 
 %\subsection{Comparison}
 

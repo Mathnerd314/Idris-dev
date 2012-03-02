@@ -30,37 +30,44 @@ using (G : Vect Ty n) {
             Expr G c
       If  : Expr G TyBool -> Expr G a -> Expr G a -> Expr G a
       Bind : Expr G a -> (interpTy a -> Expr G b) -> Expr G b
-  
+ 
+  dsl expr
+      lambda = Lam
+      variable = Var
+      index_first = stop
+      index_next = pop
+
   interp : Env G -> {static} Expr G t -> interpTy t
   interp env (Var i)     = lookup i env
   interp env (Val x)     = x
   interp env (Lam sc)    = \x => interp (x :: env) sc
   interp env (App f s)   = (interp env f) (interp env s)
   interp env (Op op x y) = op (interp env x) (interp env y)
-  interp env (If x t e)  = if (interp env x) then (interp env t) else (interp env e)
+  interp env (If x t e)  = if interp env x then interp env t else interp env e
   interp env (Bind v f)  = interp env (f (interp env v))
  
   eId : Expr G (TyFun TyInt TyInt)
-  eId = Lam (Var stop)
+  eId = expr (\x => x)
 
   eTEST : Expr G (TyFun TyInt (TyFun TyInt TyInt))
-  eTEST = Lam (Lam (Var (pop stop)))
+  eTEST = expr (\x, y => y)
 
   eAdd : Expr G (TyFun TyInt (TyFun TyInt TyInt))
-  eAdd = Lam (Lam (Op prim__addInt (Var stop) (Var (pop stop))))
+  eAdd = expr (\x, y => Op (+) x y)
   
 --   eDouble : Expr G (TyFun TyInt TyInt)
 --   eDouble = Lam (App (App (Lam (Lam (Op' (+) (Var fO) (Var (fS fO))))) (Var fO)) (Var fO))
   
   eDouble : Expr G (TyFun TyInt TyInt)
-  eDouble = Lam (App (App eAdd (Var stop)) (Var stop))
+  eDouble = expr (\x => App (App eAdd x) (Var stop))
  
   app : |(f : Expr G (TyFun a t)) -> Expr G a -> Expr G t
   app = \f, a => App f a
 
   eFac : Expr G (TyFun TyInt TyInt)
-  eFac = Lam (If (Op (==) (Var stop) (Val 0))
-                 (Val 1) (Op (*) (app eFac (Op (-) (Var stop) (Val 1))) (Var stop)))
+  eFac = expr (\x => If (Op (==) x (Val 0))
+                 (Val 1) 
+                 (Op (*) (app eFac (Op (-) x (Val 1))) x))
 
   -- Exercise elaborator: Complicated way of doing \x y => x*4 + y*2
   

@@ -13,10 +13,12 @@ import Core.TT
 import Core.Unify
 
 import Control.Monad.State
-import Control.Applicative
+import Control.Applicative hiding (empty)
 import Data.List
 import Debug.Trace
 import Data.Data(Data, Typeable)
+
+import Util.Pretty
 
 data ProofState = PS { thname   :: Name,
                        holes    :: [Name], -- holes still to be solved
@@ -24,6 +26,8 @@ data ProofState = PS { thname   :: Name,
                        pterm    :: Term,   -- current proof term
                        ptype    :: Type,   -- original goal
                        unified  :: (Name, [(Name, Term)]),
+                       solved   :: Maybe (Name, Term),
+                       problems :: Fails,
                        injective :: [(Term, Term, Term)],
                        deferred :: [Name], -- names we'll need to define
                        instances :: [Name], -- instance arguments (for type classes)
@@ -74,8 +78,8 @@ data Tactic = Attack
 -- Some utilites on proof and tactic states
 
 instance Show ProofState where
-    show (PS nm [] _ tm _ _ _ _ _ _ _ _ _) = show nm ++ ": no more goals"
-    show (PS nm (h:hs) _ tm _ _ _ i _ _ ctxt _ _) 
+    show (PS nm [] _ tm _ _ _ _ _ _ _ _ _ _ _) = show nm ++ ": no more goals"
+    show (PS nm (h:hs) _ tm _ _ _ _ _ i _ _ ctxt _ _) 
           = let OK g = goal (Just h) tm
                 wkenv = premises g in
                 "Other goals: " ++ show hs ++ "\n" ++
@@ -97,6 +101,45 @@ instance Show ProofState where
                                          " =?= " ++ showEnv ps v
                showG ps b = showEnv ps (binderTy b)
 
+instance Pretty ProofState where
+  pretty (PS nm [] _ trm _ _ _ _ _ _ _ _ _ _ _) =
+    if size nm > breakingSize then
+      pretty nm <> colon $$ nest nestingSize (text " no more goals.")
+    else
+      pretty nm <> colon <+> text " no more goals."
+  pretty p@(PS nm (h:hs) _ tm _ _ _ _ _ i _ _ ctxt _ _) =
+    let OK g  = goal (Just h) tm in
+    let wkEnv = premises g in
+      text "Other goals" <+> colon <+> pretty hs $$
+      prettyPs wkEnv (reverse wkEnv) $$
+      text "---------- " <+> text "Focussing on" <> colon <+> pretty nm <+> text " ----------" $$
+      pretty h <+> colon <+> prettyGoal wkEnv (goalType g)
+    where
+      prettyGoal ps (Guess t v) =
+        if size v > breakingSize then
+          prettyEnv ps t <+> text "=?=" $$
+            nest nestingSize (prettyEnv ps v)
+        else 
+          prettyEnv ps t <+> text "=?=" <+> prettyEnv ps v
+      prettyGoal ps b = prettyEnv ps $ binderTy b
+
+      prettyPs env [] = empty
+      prettyPs env ((n, Let t v):bs) =
+        nest nestingSize (pretty n <+> colon <+>
+          if size v > breakingSize then
+            prettyEnv env t <+> text "=" $$
+              nest nestingSize (prettyEnv env v) $$
+                nest nestingSize (prettyPs env bs)
+          else
+            prettyEnv env t <+> text "=" <+> prettyEnv env v $$
+              nest nestingSize (prettyPs env bs))
+      prettyPs env ((n, b):bs) =
+        if size (binderTy b) > breakingSize then
+          nest nestingSize (pretty n <+> colon <+> prettyEnv env (binderTy b) <+> prettyPs env bs)
+        else
+          nest nestingSize (pretty n <+> colon <+> prettyEnv env (binderTy b) $$
+            nest nestingSize (prettyPs env bs))
+
 same Nothing n  = True
 same (Just x) n = x == n
 
@@ -105,6 +148,16 @@ hole (Guess _ _) = True
 hole _           = False
 
 holeName i = MN i "hole" 
+
+unify' :: Context -> Env -> TT Name -> TT Name -> StateT TState TC [(Name, TT Name)]
+unify' ctxt env topx topy = do (u, inj, fails) <- lift $ unify ctxt env topx topy
+                               addInj inj
+                               case fails of
+                                    [] -> return u
+                                    err -> 
+                                        do ps <- get
+                                           put (ps { problems = err ++ problems ps })
+                                           return []
 
 getName :: Monad m => String -> StateT TState m Name
 getName tag = do ps <- get
@@ -122,7 +175,8 @@ addLog str = action (\ps -> ps { plog = plog ps ++ str ++ "\n" })
 newProof :: Name -> Context -> Type -> ProofState
 newProof n ctxt ty = let h = holeName 0 
                          ty' = vToP ty in
-                         PS n [h] 1 (Bind h (Hole ty') (P Bound h ty')) ty (h, []) []
+                         PS n [h] 1 (Bind h (Hole ty') (P Bound h ty')) ty (h, []) 
+                            Nothing [] []
                             [] []
                             Nothing ctxt "" False
 
@@ -266,8 +320,7 @@ fill :: Raw -> RunTactic
 fill guess ctxt env (Bind x (Hole ty) sc) =
     do (val, valty) <- lift $ check ctxt env guess
        s <- get
-       (ns, inj) <- lift $ unify ctxt env valty ty
-       addInj inj
+       ns <- unify' ctxt env valty ty
        ps <- get
        let (uh, uns) = unified ps
        put (ps { unified = (uh, uns ++ ns) })
@@ -277,7 +330,7 @@ fill _ _ _ _ = fail "Can't fill here."
 
 prep_fill :: Name -> [Name] -> RunTactic
 prep_fill f as ctxt env (Bind x (Hole ty) sc) =
-    do let val = mkApp (P Ref f undefined) (map (\n -> P Ref n undefined) as)
+    do let val = mkApp (P Ref f Erased) (map (\n -> P Ref n Erased) as)
        return $ Bind x (Guess ty val) sc
 prep_fill f as ctxt env t = fail $ "Can't prepare fill at " ++ show t
 
@@ -285,8 +338,7 @@ complete_fill :: RunTactic
 complete_fill ctxt env (Bind x (Guess ty val) sc) =
     do let guess = forget val
        (val', valty) <- lift $ check ctxt env guess    
-       (ns, inj) <- lift $ unify ctxt env valty ty
-       addInj inj
+       ns <- unify' ctxt env valty ty
        ps <- get
        let (uh, uns) = unified ps
        put (ps { unified = (uh, uns ++ ns) })
@@ -298,10 +350,11 @@ solve ctxt env (Bind x (Guess ty val) sc)
    | pureTerm val = do ps <- get
                        let (uh, uns) = unified ps
                        action (\ps -> ps { holes = holes ps \\ [x],
+                                           solved = Just (x, val),
                                            -- unified = (uh, uns ++ [(x, val)]),
                                            instances = instances ps \\ [x] })
                        return $ {- Bind x (Let ty val) sc -} instantiate val (pToV x sc)
-   | otherwise    = fail $ "I see a hole in your solution. " ++ showEnv env val
+   | otherwise    = lift $ tfail $ IncompleteTerm val
 solve _ _ h = fail $ "Not a guess " ++ show h
 
 introTy :: Raw -> Maybe Name -> RunTactic
@@ -314,8 +367,7 @@ introTy ty mn ctxt env (Bind x (Hole t) (P _ x' _)) | x == x' =
 --        ns <- lift $ unify ctxt env tyv t'
        case t' of
            Bind y (Pi s) t -> let t' = instantiate (P Bound n s) (pToV y t) in
-                                  do (ns, inj) <- lift $ unify ctxt env s tyv
-                                     addInj inj
+                                  do ns <- unify' ctxt env s tyv
                                      ps <- get
                                      let (uh, uns) = unified ps
                                      put (ps { unified = (uh, uns ++ ns) })
@@ -438,10 +490,16 @@ updateSolved xs (P _ n _)
     | Just v <- lookup n xs = v
 updateSolved xs t = t
 
+updateProblems ns [] = []
+updateProblems ns ((x, y, env, err) : ps) =
+    let x' = updateSolved ns x
+        y' = updateSolved ns y in
+        (x',y',env,err) : updateProblems ns ps
+
 processTactic :: Tactic -> ProofState -> TC (ProofState, String)
 processTactic QED ps = case holes ps of
                            [] -> do let tm = {- normalise (context ps) [] -} (pterm ps)
-                                    (tm', ty', _) <- recheck (context ps) [] tm
+                                    (tm', ty', _) <- recheck (context ps) [] (forget tm) tm
                                     return (ps { done = True, pterm = tm' }, 
                                             "Proof complete: " ++ showEnv [] tm')
                            _  -> fail "Still holes to fill."
@@ -449,13 +507,19 @@ processTactic ProofState ps = return (ps, showEnv [] (pterm ps))
 processTactic Undo ps = case previous ps of
                             Nothing -> fail "Nothing to undo."
                             Just pold -> return (pold, "")
-processTactic EndUnify ps = let (h, ns) = unified ps
-                                tm' = updateSolved ns (pterm ps) in
-                                return (ps { pterm = tm', 
-                                             unified = (h, []),
-                                             injective = map (tmap (updateSolved ns)) 
-                                                             (injective ps),
-                                             holes = holes ps \\ map fst ns }, "")
+processTactic EndUnify ps 
+    = let (h, ns) = unified ps
+          ns' = map (\ (n, t) -> (n, updateSolved ns t)) ns 
+          tm' = -- trace ("Updating " ++ show ns' ++ " in " ++ show (pterm ps)) $
+                updateSolved ns' (pterm ps) 
+          probs' = updateProblems ns' (problems ps) in
+          case probs' of
+            [] -> return (ps { pterm = tm', 
+                               unified = (h, []),
+                               injective = map (tmap (updateSolved ns')) 
+                                                (injective ps),
+                               holes = holes ps \\ map fst ns' }, "")
+            errs@((_,_,_,err):_) -> tfail err
 processTactic (Reorder n) ps 
     = do ps' <- execStateT (tactic (Just n) reorder_claims) ps
          return (ps' { previous = Just ps, plog = "" }, plog ps')
@@ -463,7 +527,12 @@ processTactic t ps
     = case holes ps of
         [] -> fail "Nothing to fill in."
         (h:_)  -> do ps' <- execStateT (process t h) ps
-                     return (ps' { previous = Just ps, plog = "" }, plog ps')
+                     let pterm' = case solved ps' of
+                                    Just s -> updateSolved [s] (pterm ps')
+                                    _ -> pterm ps'
+                     return (ps' { pterm = pterm',
+                                   solved = Nothing,
+                                   previous = Just ps, plog = "" }, plog ps')
 
 process :: Tactic -> Name -> StateT TState TC ()
 process EndUnify _ 

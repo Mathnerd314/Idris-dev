@@ -3,6 +3,7 @@
 module Idris.Compiler where
 
 import Idris.AbsSyntax hiding (Include)
+import Idris.Transforms
 
 import Core.TT
 import Core.Evaluate
@@ -10,36 +11,64 @@ import Core.CaseTree
 
 import Control.Monad.State
 import Data.List
+import System.Process
+import System.IO
+import System.Directory
+import System.Environment
 
 import Epic.Epic hiding (Term, Type, Name, fn, compile)
 import qualified Epic.Epic as E
 
 primDefs = [UN "mkForeign", UN "FalseElim"]
 
-compile :: FilePath -> Idris ()
-compile f = do checkMVs
-               ds <- mkDecls
-               objs <- getObjectFiles
-               libs <- getLibs
-               hdrs <- getHdrs
-               let incs = map Include hdrs
-               liftIO $ compileObjWith [Debug] (mkProgram (incs ++ ds)) (f ++ ".o")
-               liftIO $ link ((f ++ ".o") : objs ++ (map ("-l"++) libs)) f
+compile :: FilePath -> Term -> Idris ()
+compile f tm
+    = do checkMVs
+         let tmnames = namesUsed (STerm tm)
+         used <- mapM (allNames []) tmnames
+         ds <- mkDecls tm (concat used)
+         objs <- getObjectFiles
+         libs <- getLibs
+         hdrs <- getHdrs
+         let incs = map Include hdrs
+         so <- getSO
+         case so of
+            Nothing ->
+                do m <- epicMain tm
+                   let mainval = EpicFn (name "main") m
+                   liftIO $ compileObjWith [] 
+                                (mkProgram (incs ++ mainval : ds)) (f ++ ".o")
+                   liftIO $ link ((f ++ ".o") : objs ++ (map ("-l"++) libs)) f
   where checkMVs = do i <- get
                       case idris_metavars i \\ primDefs of
                             [] -> return ()
                             ms -> fail $ "There are undefined metavariables: " ++ show ms
 
-mkDecls :: Idris [EpicDecl]
-mkDecls = do i <- getIState
-             decls <- mapM build (ctxtAlist (tt_ctxt i))
-             return $ basic_defs ++ EpicFn (name "main") epicMain : decls
+allNames :: [Name] -> Name -> Idris [Name]
+allNames ns n | n `elem` ns = return []
+allNames ns n = do i <- get
+                   case lookupCtxt Nothing n (idris_callgraph i) of
+                      [ns'] -> do more <- mapM (allNames (n:ns)) ns' 
+                                  return (nub (n : concat more))
+                      _ -> return [n]
+
+mkDecls :: Term -> [Name] -> Idris [EpicDecl]
+mkDecls t used
+    = do i <- getIState
+         let ds = filter (\ (n, d) -> n `elem` used) $ ctxtAlist (tt_ctxt i)
+         decls <- mapM build ds
+         return $ basic_defs ++ decls
+             
+-- EpicFn (name "main") epicMain : decls
 
 ename x = name ("idris_" ++ show x)
 aname x = name ("a_" ++ show x)
 
-epicMain = effect_ $ -- ref (ename (UN "run__IO")) @@
-                     ref (ename (NS (UN "main") ["main"]))
+epicMain tm = do e <- epic tm
+                 return $ effect_ e
+
+-- epicMain = effect_ $ -- ref (ename (UN "run__IO")) @@
+--                      ref (ename (NS (UN "main") ["main"]))
 
 class ToEpic a where
     epic :: a -> Idris E.Term
@@ -56,7 +85,7 @@ impossible = int 42424242
 
 instance ToEpic Def where
     epic (Function tm _) = epic tm
-    epic (CaseOp _ _ pats args sc) = epic (args, sc) -- TODO: redo case comp after optimising
+    epic (CaseOp _ _ pats _ _ args sc) = epic (args, sc) -- optimised version
     epic _ = return impossible
 
 instance ToEpic (TT Name) where
@@ -64,15 +93,22 @@ instance ToEpic (TT Name) where
       epic' env tm@(App f a)
           | (P _ (UN "mkForeign") _, args) <- unApply tm
               = doForeign args
-          | (P _ (UN "lazy") _, [_, arg]) <- unApply tm
+          | (P _ (UN "lazy") _, [_,arg]) <- unApply tm
               = do arg' <- epic' env arg
                    return $ lazy_ arg'
-          | (P _ (UN "prim__IO") _, [_, v]) <- unApply tm
+          | (P _ (UN "prim__IO") _, [v]) <- unApply tm
               = epic' env v
           | (P _ (UN "io_bind") _, [_,_,v,k]) <- unApply tm
               = do v' <- epic' env v 
                    k' <- epic' env k
                    return (k' @@ (effect_ v'))
+          | (P _ (UN "malloc") _, [_,size,t]) <- unApply tm
+              = do size' <- epic' env size
+                   t' <- epic' env t
+                   return $ malloc_ size' t'
+          | (P _ (UN "trace_malloc") _, [_,t]) <- unApply tm
+              = do t' <- epic' env t
+                   return $ mallocTrace_ t'
           | (P (DCon t a) n _, args) <- unApply tm
               = epicCon env t a n args
       epic' env (P (DCon t a) n _) = return $ con_ t
@@ -91,6 +127,7 @@ instance ToEpic (TT Name) where
                                a' <- epic' env a
                                return (f' @@ a')
       epic' env (Constant c) = epic c
+      epic' env Erased       = return impossible
       epic' env (Set _)      = return impossible
 
       epicCon env t arity n args
@@ -115,13 +152,13 @@ doForeign (_ : fgn : args)
               do args' <- mapM epic args
                  -- wrap it in a prim__IO
                  -- return $ con_ 0 @@ impossible @@ 
-                 return $ foreign_ rty fgnName (zip args' tys)
+                 return $ lazy_ $ foreign_ rty fgnName (zip args' tys)
    | otherwise = fail "Badly formed foreign function call"
 
 getFTypes :: TT Name -> [E.Type]
 getFTypes tm = case unApply tm of
-                 (nil, [arg]) -> []
-                 (cons, [a, (P _ (UN ty) _), xs]) -> 
+                 (nil, []) -> []
+                 (cons, [(P _ (UN ty) _), xs]) -> 
                     let rest = getFTypes xs in
                         mkEty ty : rest                        
 
@@ -151,6 +188,14 @@ instance ToEpic ([Name], SC) where
                            return $ term (map ename args, tree')
 
 instance ToEpic SC where
+    epic (Case n [ConCase _ i ns sc])
+        = epicLet n ns 0 sc
+      where
+        epicLet x [] _ sc = epic sc
+        epicLet x (n:ns) i sc 
+            = do sc' <- epicLet x ns (i+1) sc
+                 return $ let_ (ref (ename x) !. i) (ename n, sc')
+
     epic (STerm t) = epic t
     epic (UnmatchedCase str) = return $ error_ str
     epic (Case n alts) = do alts' <- mapM mkEpicAlt alts
@@ -167,4 +212,15 @@ instance ToEpic SC where
         mkEpicAlt (DefaultCase rhs)      = do rhs' <- epic rhs
                                               return $ defaultcase rhs'
 
+tempfile :: IO (FilePath, Handle)
+tempfile = do env <- environment "TMPDIR"
+              let dir = case env of
+                              Nothing -> "/tmp"
+                              (Just d) -> d
+              openTempFile dir "esc"
+
+environment :: String -> IO (Maybe String)
+environment x = catch (do e <- getEnv x
+                          return (Just e))
+                      (\_ -> return Nothing)
 

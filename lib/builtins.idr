@@ -15,11 +15,17 @@ FalseElim : _|_ -> a
 replace : {a:_} -> {x:_} -> {y:_} -> {P : a -> Set} -> x = y -> P x -> P y
 replace refl prf = prf
 
-sym : {x:a} -> {y:a} -> x = y -> y = x
+sym : {l:a} -> {r:a} -> l = r -> r = l
 sym refl = refl
 
 lazy : a -> a
 lazy x = x -- compiled specially
+
+malloc : Int -> a -> a
+malloc size x = x -- compiled specially
+
+trace_malloc : a -> a
+trace_malloc x = x -- compiled specially
 
 believe_me : a -> b -- compiled specially as id, use with care!
 believe_me x = prim__believe_me _ _ x
@@ -50,6 +56,9 @@ infixr 1 $
 
 ($) : (a -> b) -> a -> b
 f $ a = f a
+
+cong : {f : t -> u} -> (a = b) -> f a = f b
+cong refl = refl
 
 data Bool = False | True
 
@@ -113,6 +122,10 @@ instance Eq Char where
 instance Eq String where
     (==) = boolOp prim__eqString
 
+instance (Eq a, Eq b) => Eq (a, b) where
+  (==) (a, c) (b, d) = (a == b) && (c == d)
+
+
 data Ordering = LT | EQ | GT
 
 class Eq a => Ord a where 
@@ -172,14 +185,19 @@ instance Ord String where
                   GT
 
 
-class (Eq a, Ord a) => Num a where 
+instance (Ord a, Ord b) => Ord (a, b) where
+  compare (xl, xr) (yl, yr) =
+    if xl /= yl
+      then compare xl yl
+      else compare xr yr
+
+
+class Num a where 
     (+) : a -> a -> a
     (-) : a -> a -> a
     (*) : a -> a -> a
 
     abs : a -> a
-    abs x = if (x < 0) then (-x) else x
-
     fromInteger : Int -> a
 
 
@@ -190,6 +208,7 @@ instance Num Int where
     (*) = prim__mulInt
 
     fromInteger = id
+    abs x = if x<0 then -x else x
 
 
 instance Num Integer where 
@@ -197,6 +216,7 @@ instance Num Integer where
     (-) = prim__subBigInt
     (*) = prim__mulBigInt
 
+    abs x = if x<0 then -x else x
     fromInteger = prim__intToBigInt
 
 
@@ -205,6 +225,7 @@ instance Num Float where
     (-) = prim__subFloat
     (*) = prim__mulFloat
 
+    abs x = if x<0 then -x else x
     fromInteger = prim__intToFloat 
 
 
@@ -232,8 +253,8 @@ strCons = prim__strCons
 strIndex : String -> Int -> Char
 strIndex = prim__strIndex
 
-rev : String -> String
-rev = prim__strRev
+reverse : String -> String
+reverse = prim__strRev
 
 }
 

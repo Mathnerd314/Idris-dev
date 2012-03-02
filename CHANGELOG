@@ -1,4 +1,41 @@
-0.1.x to 0.9:
+New in 0.9.2:
+-------------
+
+User visible changes:
+
+* backtick notation added: x `foo` y  ==> foo x y
+* case expressions allowed in type signatures
+* Library extensions in prelude.vect and prelude.algebra
+* malloc/trace_malloc added to builtins.idr
+
+Internal changes:
+
+* Some type class resolution fixes
+* Several minor bug fixes 
+* Performance improvements in resolving overloading and type classes
+
+New in 0.9.1:
+-------------
+
+User visible changes:
+
+* DSL notation, for overloading lambda and let bindings
+* Dependent records, with projection and update
+* Totality checking and 'total' keyword
+* Auto implicits and default argument values {auto n : T}, {default val n : T}
+* Overlapping type class instances disallowed
+* Many extensions to prelude.nat and prelude.list libraries (mostly thanks to
+  Dominic Mulligan)
+* New libraries: control.monad.identity, control.monad.state
+* Small improvements in error reporting
+
+Internal changes:
+
+* Faster compilation (only compiling names which are used)
+* Better type class resolution
+* Lots of minor bug fixes
+
+0.1.x to 0.9.0:
 
 Complete rewrite. User visible changes:
 
@@ -18,4 +55,15 @@ Complete rewrite. User visible changes:
 * Improved interactive environment
 * Replaced 'do using' with Monad class
 * Extended syntax macros
+
+Internal changes:
+
+* Everything :-)
+* All definitions (functions, classes and instances) are elaborated to top 
+  level, fully explicit, data declarations and pattern matching definitions, 
+  which are verified by a minimal type checker. 
+
+This is the first release of a complete reimplementation. There will be bugs.
+If you find any, please do not hesitate to contact Edwin Brady 
+(ecb10@st-andrews.ac.uk).
 

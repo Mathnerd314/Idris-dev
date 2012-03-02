@@ -1,9 +1,14 @@
-\subsection{Syntax Extensions}
+\section{Syntax Extensions}
 
 \Idris{} supports the implementation of Embedded Domain Specific Languages (EDSLs) in
 several ways~\cite{res-dsl-padl12}. One way, as we have already seen, is through
 extending \texttt{do} notation. Another important way is to allow extension of the core
-syntax. For example, we have seen \texttt{if...then...else} expressions, but these
+syntax. In this section we describe two ways of extending the syntax: \texttt{syntax}
+rules and \texttt{dsl} notation.
+
+\subsection{\texttt{syntax} rules}
+
+We have seen \texttt{if...then...else} expressions, but these
 are not built in --- instead, we define a function in the prelude\ldots
 
 \begin{SaveVerbatim}{boolelim}
@@ -33,7 +38,9 @@ hand side describes its expansion. The syntax rule itself consists of:
 \item \textbf{Keywords} --- here, \texttt{if}, \texttt{then} and \texttt{else}, which must
 be valid identifiers
 \item \textbf{Non-terminals} --- included in square brackets, \texttt{[test]}, \texttt{[t]}
-and \texttt{[e]} here, which stand for arbitrary expressions
+and \texttt{[e]} here, which stand for arbitrary expressions. To avoid parsing ambiguities, 
+these expressions cannot use syntax extensions at the top level (though they can be used
+in parentheses).
 \item \textbf{Symbols} --- included in quotations marks, e.g. \texttt{":="}
 \end{itemize}
 
@@ -52,4 +59,38 @@ syntax select [x] from [t]           = Select x t;
 
 \end{SaveVerbatim}
 \useverb{syntaxex}
+
+\noindent
+Syntax macros can be further restricted to apply only in patterns (i.e., only on the left
+hand side of a pattern match clause) or only in terms (i.e. everywhere but the left hand side
+of a pattern match clause) by being marked as \texttt{pattern} or \texttt{term} syntax
+rules. For example, we might define an interval as follows, with a static check
+that the lower bound is below the upper bound using \texttt{so}:
+
+\begin{SaveVerbatim}{interval}
+
+data Interval : Set where
+   MkInterval : (lower : Float) -> (upper : Float) -> 
+                so (lower < upper) -> Interval
+
+\end{SaveVerbatim}
+\useverb{interval}
+
+\noindent
+We can define a syntax which, in patterns, always matches \texttt{oh} for the proof 
+argument, and in terms requires a proof term to be provided:
+
+\begin{SaveVerbatim}{intervalsyn}
+
+pattern syntax "[" [x] "..." [y] "]" = MkInterval x y oh
+term    syntax "[" [x] "..." [y] "]" = MkInterval x y ?bounds_lemma
+
+\end{SaveVerbatim}
+\useverb{intervalsyn} 
+
+\noindent
+In terms, the syntax \texttt{[x...y]} will generate a proof obligation
+\texttt{bounds\_lemma} (possibly renamed).
+
+\input{dsl}
 

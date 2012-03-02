@@ -12,6 +12,7 @@ import Idris.Delaborate
 import Idris.Compiler
 import Idris.Prover
 import Idris.Parser
+import Idris.Coverage
 import Paths_idris
 
 import Core.Evaluate
@@ -19,11 +20,12 @@ import Core.ProofShell
 import Core.TT
 import Core.Constraints
 
-import System.Console.Haskeline
+import System.Console.Haskeline as H
 import System.FilePath
 import System.Environment
 import System.Process
 import System.Directory
+import System.IO
 import Control.Monad
 import Control.Monad.State
 import Data.List
@@ -32,19 +34,30 @@ import Data.Version
 
 repl :: IState -> [FilePath] -> Idris ()
 repl orig mods
-     = do let prompt = mkPrompt mods
+   = H.catch
+      (do let prompt = mkPrompt mods
           x <- lift $ getInputLine (prompt ++ "> ")
           case x of
               Nothing -> do iputStrLn "Bye bye"
                             return ()
-              Just input -> do ms <- processInput input orig mods
-                               case ms of
-                                    Just mods -> repl orig mods
-                                    Nothing -> return ()
+              Just input -> H.catch 
+                              (do ms <- processInput input orig mods
+                                  case ms of
+                                      Just mods -> repl orig mods
+                                      Nothing -> return ())
+                              ctrlC)
+      ctrlC
+   where ctrlC :: SomeException -> Idris ()
+         ctrlC e = do iputStrLn (show e)
+                      repl orig mods
 
 mkPrompt [] = "Idris"
 mkPrompt [x] = "*" ++ dropExtension x
 mkPrompt (x:xs) = "*" ++ dropExtension x ++ " " ++ mkPrompt xs
+
+lit f = case splitExtension f of
+            (_, ".lidr") -> True
+            _ -> False
 
 processInput :: String -> IState -> [FilePath] -> Idris (Maybe [FilePath])
 processInput cmd orig inputs
@@ -62,12 +75,12 @@ processInput cmd orig inputs
                 Right Edit -> do edit fn orig
                                  return (Just inputs)
                 Right AddProof -> do idrisCatch (addProof fn orig)
-                                                (\e -> iputStrLn (report e))
+                                                (\e -> iputStrLn (show e))
                                      return (Just inputs)
                 Right Quit -> do iputStrLn "Bye bye"
                                  return Nothing
-                Right cmd  -> do idrisCatch (process cmd)
-                                            (\e -> iputStrLn (report e))
+                Right cmd  -> do idrisCatch (process fn cmd)
+                                            (\e -> iputStrLn (show e))
                                  return (Just inputs)
 
 edit :: FilePath -> IState -> Idris ()
@@ -99,7 +112,7 @@ addProof f orig
          i <- get
          case last_proof i of
             Nothing -> iputStrLn "No proof to add"
-            Just (n, p) -> do let prog' = insertScript (showProof n p) (lines prog)
+            Just (n, p) -> do let prog' = insertScript (showProof (lit f) n p) (lines prog)
                               liftIO $ writeFile f (unlines prog')
                               iputStrLn $ "Added proof " ++ show n
                               put (i { last_proof = Nothing })
@@ -111,9 +124,10 @@ insertScript prf (p@"---------- Proofs ----------" : "" : xs)
     = p : "" : prf : xs
 insertScript prf (x : xs) = x : insertScript prf xs
 
-process :: Command -> Idris ()
-process Help = iputStrLn displayHelp
-process (Eval t) = do (tm, ty) <- elabVal toplevel False t
+process :: FilePath -> Command -> Idris ()
+process fn Help = iputStrLn displayHelp
+process fn (Eval t) 
+                 = do (tm, ty) <- elabVal toplevel False t
                       ctxt <- getContext
                       ist <- get 
                       let tm' = normaliseAll ctxt [] tm
@@ -122,7 +136,17 @@ process (Eval t) = do (tm, ty) <- elabVal toplevel False t
                       imp <- impShow
                       iputStrLn (showImp imp (delab ist tm') ++ " : " ++ 
                                  showImp imp (delab ist ty'))
-process (Check (PRef _ n))
+process fn (ExecVal t) 
+                    = do (tm, ty) <- elabVal toplevel False t 
+--                                         (PApp fc (PRef fc (NS (UN "print") ["prelude"]))
+--                                                           [pexp t])
+                         (tmpn, tmph) <- liftIO tempfile
+                         liftIO $ hClose tmph
+                         compile tmpn tm
+                         liftIO $ system tmpn
+                         return ()
+    where fc = FC "(input)" 0 
+process fn (Check (PRef _ n))
                   = do ctxt <- getContext
                        ist <- get
                        imp <- impShow
@@ -130,50 +154,96 @@ process (Check (PRef _ n))
                         [t] -> iputStrLn $ show n ++ " : " ++
                                   showImp imp (delab ist t)
                         _ -> iputStrLn $ "No such variable " ++ show n
-process (Check t) = do (tm, ty) <- elabVal toplevel False t
-                       ctxt <- getContext
-                       ist <- get 
-                       imp <- impShow
-                       let ty' = normaliseC ctxt [] ty
-                       iputStrLn (showImp imp (delab ist tm) ++ " : " ++ 
-                                 showImp imp (delab ist ty))
-process Universes = do i <- get
-                       let cs = idris_constraints i
+process fn (Check t) = do (tm, ty) <- elabVal toplevel False t
+                          ctxt <- getContext
+                          ist <- get 
+                          imp <- impShow
+                          let ty' = normaliseC ctxt [] ty
+                          iputStrLn (showImp imp (delab ist tm) ++ " : " ++ 
+                                    showImp imp (delab ist ty))
+process fn Universes = do i <- get
+                          let cs = idris_constraints i
 --                        iputStrLn $ showSep "\n" (map show cs)
-                       liftIO $ print (map fst cs)
-                       let n = length cs
-                       iputStrLn $ "(" ++ show n ++ " constraints)"
-                       case ucheck cs of
+                          liftIO $ print (map fst cs)
+                          let n = length cs
+                          iputStrLn $ "(" ++ show n ++ " constraints)"
+                          case ucheck cs of
                             Error e -> iputStrLn $ pshow i e
                             OK _ -> iputStrLn "Universes OK"
-process (Defn n) = do ctxt <- getContext
-                      liftIO $ print (lookupDef Nothing n ctxt)
-process (Spec t) = do (tm, ty) <- elabVal toplevel False t
-                      ctxt <- getContext
-                      ist <- get
-                      let tm' = specialise ctxt (idris_statics ist) tm
-                      iputStrLn (show (delab ist tm'))
-process (Prove n) = prover n
-process (HNF t)  = do (tm, ty) <- elabVal toplevel False t
-                      ctxt <- getContext
-                      ist <- get
-                      let tm' = simplify ctxt [] tm
-                      iputStrLn (show (delab ist tm'))
-process TTShell  = do ist <- get
-                      let shst = initState (tt_ctxt ist)
-                      shst' <- lift $ runShell shst
-                      return ()
-process (Execute f) = do compile f 
-                         liftIO $ system ("./" ++ f)
+process fn (Defn n) = do i <- get
+                         iputStrLn "Compiled patterns:\n"
+                         liftIO $ print (lookupDef Nothing n (tt_ctxt i))
+                         case lookupCtxt Nothing n (idris_patdefs i) of
+                            [] -> return ()
+                            [d] -> do iputStrLn "Original definiton:\n"
+                                      mapM_ (printCase i) d
+                         case lookupTotal n (tt_ctxt i) of
+                            [t] -> iputStrLn (showTotal t i)
+                            _ -> return ()
+    where printCase i (lhs, rhs) = do liftIO $ putStr $ showImp True (delab i lhs)
+                                      liftIO $ putStr " = "
+                                      liftIO $ putStrLn $ showImp True (delab i rhs)
+process fn (TotCheck n) = do i <- get
+                             case lookupTotal n (tt_ctxt i) of
+                                [t] -> iputStrLn (showTotal t i)
+                                _ -> return ()
+process fn (Info n) = do i <- get
+                         let oi = lookupCtxtName Nothing n (idris_optimisation i)
+                         when (not (null oi)) $ iputStrLn (show oi)
+                         let si = lookupCtxt Nothing n (idris_statics i)
+                         when (not (null si)) $ iputStrLn (show si)
+process fn (Spec t) = do (tm, ty) <- elabVal toplevel False t
+                         ctxt <- getContext
+                         ist <- get
+                         let tm' = specialise ctxt [] [] {- (idris_statics ist) -} tm
+                         iputStrLn (show (delab ist tm'))
+process fn (Prove n) = do prover (lit fn) n
+                          -- recheck totality
+                          i <- get
+                          totcheck (FC "(input)" 0, n)
+                          mapM_ (\ (f,n) -> setTotality n Unchecked) (idris_totcheck i)
+                          mapM_ checkDeclTotality (idris_totcheck i)
+process fn (HNF t)  = do (tm, ty) <- elabVal toplevel False t
+                         ctxt <- getContext
+                         ist <- get
+                         let tm' = simplify ctxt [] tm
+                         iputStrLn (show (delab ist tm'))
+process fn TTShell  = do ist <- get
+                         let shst = initState (tt_ctxt ist)
+                         shst' <- lift $ runShell shst
                          return ()
-process (Compile f) = do compile f 
-process (LogLvl i) = setLogLevel i 
-process Metavars = do ist <- get
+process fn Execute = do (m, _) <- elabVal toplevel False 
+                                        (PApp fc 
+                                           (PRef fc (UN "run__IO"))
+                                           [pexp $ PRef fc (NS (UN "main") ["main"])])
+--                                      (PRef (FC "main" 0) (NS (UN "main") ["main"]))
+                        (tmpn, tmph) <- liftIO tempfile
+                        liftIO $ hClose tmph
+                        compile tmpn m
+                        liftIO $ system tmpn
+                        return ()
+  where fc = FC "main" 0                     
+process fn (Compile f) = do (m, _) <- elabVal toplevel False
+                                        (PApp fc 
+                                           (PRef fc (UN "run__IO"))
+                                           [pexp $ PRef fc (NS (UN "main") ["main"])])
+                            compile f m
+  where fc = FC "main" 0                     
+process fn (LogLvl i) = setLogLevel i 
+process fn Metavars 
+                 = do ist <- get
                       let mvs = idris_metavars ist \\ primDefs
                       case mvs of
                         [] -> iputStrLn "No global metavariables to solve"
                         _ -> iputStrLn $ "Global metavariables:\n\t" ++ show mvs
-process NOP      = return ()
+process fn NOP      = return ()
+
+showTotal t@(Partial (Other ns)) i
+   = show t ++ "\n\t" ++ showSep "\n\t" (map (showTotalN i) ns)
+showTotal t i = show t
+showTotalN i n = case lookupTotal n (tt_ctxt i) of
+                        [t] -> showTotal t i
+                        _ -> ""
 
 displayHelp = let vstr = showVersion version in
               "\nIdris version " ++ vstr ++ "\n" ++
@@ -189,13 +259,14 @@ help =
     ([""], "", ""),
     (["<expr>"], "", "Evaluate an expression"),
     ([":t"], "<expr>", "Check the type of an expression"),
+    ([":total"], "<name>", "Check the totality of a name"),
     ([":r",":reload"], "", "Reload current file"),
     ([":e",":edit"], "", "Edit current file using $EDITOR or $VISUAL"),
     ([":m",":metavars"], "", "Show remaining proof obligations (metavariables)"),
     ([":p",":prove"], "<name>", "Prove a metavariable"),
     ([":a",":addproof"], "", "Add last proof to source file"),
     ([":c",":compile"], "<filename>", "Compile to an executable <filename>"),
-    ([":exec",":execute"], "<filename>", "Compile to an executable <filename> and run"),
+    ([":exec",":execute"], "", "Compile to an executable and run"),
     ([":?",":h",":help"], "", "Display this help text"),
     ([":q",":quit"], "", "Exit the Idris system")
   ]

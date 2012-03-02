@@ -16,8 +16,8 @@ import Core.Evaluate
 
 convertsC :: Context -> Env -> Term -> Term -> StateT UCs TC ()
 convertsC ctxt env x y 
-   = do c <- convEq (finalise (normalise ctxt env x))
-                    (finalise (normalise ctxt env y))
+   = do c <- convEq ctxt (finalise (normalise ctxt env x))
+                         (finalise (normalise ctxt env y))
         if c then return ()
              else fail ("Can't convert between " ++ 
                         showEnv env (finalise (normalise ctxt env x)) ++ " and " ++ 
@@ -36,11 +36,11 @@ isSet ctxt env tm = isSet' (normalise ctxt env tm)
     where isSet' (Set _) = return ()
           isSet' tm = fail (showEnv env tm ++ " is not a Set")
 
-recheck :: Context -> Env -> Term -> TC (Term, Type, UCs)
-recheck ctxt env tm 
+recheck :: Context -> Env -> Raw -> Term -> TC (Term, Type, UCs)
+recheck ctxt env tm orig
    = let v = next_tvar ctxt in
-       case runStateT (check' False ctxt env (forget tm)) (v, []) of -- holes banned
-          Error (IncompleteTerm _) -> Error $ IncompleteTerm tm
+       case runStateT (check' False ctxt env tm) (v, []) of -- holes banned
+          Error (IncompleteTerm _) -> Error $ IncompleteTerm orig
           Error e -> Error e
           OK ((tm, ty), constraints) -> 
               return (tm, ty, constraints)
@@ -52,8 +52,8 @@ check' :: Bool -> Context -> Env -> Raw -> StateT UCs TC (Term, Type)
 check' holes ctxt env top = chk env top where
   chk env (Var n)
       | Just (i, ty) <- lookupTyEnv n env = return (P Bound n ty, ty)
-      | [P nt n' ty] <- lookupP Nothing n ctxt = return (P nt n' ty, ty)
-      | otherwise = do fail $ "No such variable " ++ show n ++ " in " ++ show (map fst env)
+      | (P nt n' ty : _) <- lookupP Nothing n ctxt = return (P nt n' ty, ty)
+      | otherwise = do lift $ tfail $ NoSuchVariable n
   chk env (RApp f a)
       = do (fv, fty) <- chk env f
            (av, aty) <- chk env a
@@ -77,13 +77,17 @@ check' holes ctxt env top = chk env top where
                      let c = ULT (UVar v) (UVar (v+1))
                      put (v+2, (c:cs))
                      return (Set (UVar v), Set (UVar (v+1)))
+  chk env (RConstant Forgot) = return (Erased, Erased)
   chk env (RConstant c) = return (Constant c, constType c)
     where constType (I _)   = Constant IType
           constType (BI _)  = Constant BIType
           constType (Fl _)  = Constant FlType
           constType (Ch _)  = Constant ChType
           constType (Str _) = Constant StrType
+          constType Forgot  = Erased
           constType _       = Set (UVal 0)
+  chk env (RForce t) = do (_, ty) <- chk env t
+                          return (Erased, ty)
   chk env (RBind n (Pi s) t)
       = do (sv, st) <- chk env s
            (tv, tt) <- chk ((n, Pi sv) : env) t

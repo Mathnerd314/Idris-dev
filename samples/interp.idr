@@ -1,6 +1,6 @@
 module main
 
-data Ty = TyInt | TyBool| TyFun Ty Ty
+data Ty = TyInt | TyBool | TyFun Ty Ty
 
 interpTy : Ty -> Set
 interpTy TyInt       = Int
@@ -11,11 +11,11 @@ using (G : Vect Ty n)
 
   data Env : Vect Ty n -> Set where
       Nil  : Env Nil
-    | (::) : interpTy a -> Env G -> Env (a :: G)
+      (::) : interpTy a -> Env G -> Env (a :: G)
 
   data HasType : (i : Fin n) -> Vect Ty n -> Ty -> Set where
       stop : HasType fO (t :: G) t
-    | pop  : HasType k G t -> HasType (fS k) (u :: G) t
+      pop  : HasType k G t -> HasType (fS k) (u :: G) t
 
   lookup : HasType i G t -> Env G -> interpTy t
   lookup stop    (x :: xs) = x
@@ -23,13 +23,42 @@ using (G : Vect Ty n)
 
   data Expr : Vect Ty n -> Ty -> Set where
       Var : HasType i G t -> Expr G t
-    | Val : (x : Int) -> Expr G TyInt
-    | Lam : Expr (a :: G) t -> Expr G (TyFun a t)
-    | App : Expr G (TyFun a t) -> Expr G a -> Expr G t
-    | Op  : (interpTy a -> interpTy b -> interpTy c) -> Expr G a -> Expr G b -> 
+      Val : (x : Int) -> Expr G TyInt
+      Lam : Expr (a :: G) t -> Expr G (TyFun a t)
+      App : Expr G (TyFun a t) -> Expr G a -> Expr G t
+      Op  : (interpTy a -> interpTy b -> interpTy c) -> Expr G a -> Expr G b -> 
             Expr G c
-    | If  : Expr G TyBool -> Expr G a -> Expr G a -> Expr G a
-    | Bind : Expr G a -> (interpTy a -> Expr G b) -> Expr G b
+      If  : Expr G TyBool -> Expr G a -> Expr G a -> Expr G a
+      Bind : Expr G a -> (interpTy a -> Expr G b) -> Expr G b
+ 
+  dsl expr
+      lambda      = Lam
+      variable    = Var
+      index_first = stop
+      index_next  = pop
+ 
+  (<$>) : |(f : Expr G (TyFun a t)) -> Expr G a -> Expr G t
+  (<$>) = \f, a => App f a
+
+  pure : Expr G a -> Expr G a
+  pure = id
+
+  syntax IF [x] THEN [t] ELSE [e] = If x t e
+
+  (==) : Expr G TyInt -> Expr G TyInt -> Expr G TyBool
+  (==) = Op (==)
+
+  (<) : Expr G TyInt -> Expr G TyInt -> Expr G TyBool
+  (<) = Op (<)
+
+  instance Num (Expr G TyInt) where
+    (+) x y = Op (+) x y
+    (-) x y = Op (-) x y
+    (*) x y = Op (*) x y
+
+    abs x = IF (x < 0) THEN (-x) ELSE x
+
+    fromInteger = Val . fromInteger
   
   interp : Env G -> {static} Expr G t -> interpTy t
   interp env (Var i)     = lookup i env
@@ -39,45 +68,25 @@ using (G : Vect Ty n)
   interp env (Op op x y) = op (interp env x) (interp env y)
   interp env (If x t e)  = if (interp env x) then (interp env t) else (interp env e)
   interp env (Bind v f)  = interp env (f (interp env v))
- 
+
   eId : Expr G (TyFun TyInt TyInt)
-  eId = Lam (Var stop)
+  eId = expr (\x => x)
 
   eTEST : Expr G (TyFun TyInt (TyFun TyInt TyInt))
-  eTEST = Lam (Lam (Var (pop stop)))
+  eTEST = expr (\x, y => y)
 
   eAdd : Expr G (TyFun TyInt (TyFun TyInt TyInt))
-  eAdd = Lam (Lam (Op prim__addInt (Var stop) (Var (pop stop))))
-  
---   eDouble : Expr G (TyFun TyInt TyInt)
---   eDouble = Lam (App (App (Lam (Lam (Op' (+) (Var fO) (Var (fS fO))))) (Var fO)) (Var fO))
+  eAdd = expr (\x, y => Op (+) x y)
   
   eDouble : Expr G (TyFun TyInt TyInt)
-  eDouble = Lam (App (App eAdd (Var stop)) (Var stop))
- 
-  app : |(f : Expr G (TyFun a t)) -> Expr G a -> Expr G t
-  app = \f, a => App f a
+  eDouble = expr (\x => App (App eAdd x) (Var stop))
 
   eFac : Expr G (TyFun TyInt TyInt)
-  eFac = Lam (If (Op (==) (Var stop) (Val 0))
-                 (Val 1) (Op (*) (app eFac (Op (-) (Var stop) (Val 1))) (Var stop)))
-
-  -- Exercise elaborator: Complicated way of doing \x y => x*4 + y*2
-  
-  eProg : Expr G (TyFun TyInt (TyFun TyInt TyInt))
-  eProg = Lam (Lam (Bind (App eDouble (Var (pop stop)))
-              (\x => Bind (App eDouble (Var stop))
-              (\y => Bind (App eDouble (Val x))
-              (\z => App (App eAdd (Val y)) (Val z))))))
-
-test : Int
-test = interp [] eProg 2 2
+  eFac = expr (\x => IF x == 0 THEN 1 ELSE [| eFac (x - 1) |] * x)
 
 testFac : Int
 testFac = interp [] eFac 4
 
 main : IO ()
-main = do { print testFac
-            print test }
-
+main = print testFac
 

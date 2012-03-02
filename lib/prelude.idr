@@ -5,12 +5,17 @@ import io
 
 import prelude.cast
 import prelude.nat
+import prelude.fin
 import prelude.list
 import prelude.maybe
+import prelude.monad
+import prelude.applicative
 import prelude.either
 import prelude.vect
 import prelude.strings
 import prelude.char
+
+%access public
 
 -- Show and instances
 
@@ -44,15 +49,15 @@ instance (Show a, Show b) => Show (a, b) where
     show (x, y) = "(" ++ show x ++ ", " ++ show y ++ ")"
 
 instance Show a => Show (List a) where 
-    show xs = "[" ++ show' xs ++ "]" where 
-        show' : Show a => List a -> String
-        show' []        = ""
-        show' [x]       = show x
-        show' (x :: xs) = show x ++ ", " ++ show' xs
+    show xs = "[" ++ show' "" xs ++ "]" where 
+        show' : String -> List a -> String
+        show' acc []        = acc
+        show' acc [x]       = acc ++ show x
+        show' acc (x :: xs) = show' (acc ++ show x ++ ", ") xs
 
 instance Show a => Show (Vect a n) where 
     show xs = "[" ++ show' xs ++ "]" where 
-        show' : Show a => Vect a n -> String
+        show' : Vect a m -> String
         show' []        = ""
         show' [x]       = show x
         show' (x :: xs) = show x ++ ", " ++ show' xs
@@ -61,17 +66,7 @@ instance Show a => Show (Maybe a) where
     show Nothing = "Nothing"
     show (Just x) = "Just " ++ show x
 
----- Monad and instances
-
-infixl 5 >>=
-
-class Monad (m : Set -> Set) where 
-    return : a -> m a
-    (>>=)  : m a -> (a -> m b) -> m b
-
-class Monad m => MonadPlus (m : Set -> Set) where 
-    mplus : m a -> m a -> m a
-    mzero : m a
+---- Monad instances
 
 instance Monad IO where 
     return t = io_return t
@@ -96,16 +91,9 @@ instance Monad List where
 
 instance MonadPlus List where 
     mzero = []
-    mplus = app
+    mplus = (++)
 
-guard : MonadPlus m => Bool -> m ()
-guard True  = return ()
-guard False = mzero
-
----- Functors
-
-class Functor (f : Set -> Set) where 
-    fmap : (a -> b) -> f a -> f b
+---- Functor instances
 
 instance Functor Maybe where 
     fmap f (Just x) = Just (f x)
@@ -114,13 +102,14 @@ instance Functor Maybe where
 instance Functor List where 
     fmap = map
 
----- Applicative functors/Idioms
+---- Applicative instances
 
-infixl 2 <$> 
+instance Applicative Maybe where
+    pure = Just
 
-class Functor f => Applicative (f : Set -> Set) where 
-    pure  : a -> f a
-    (<$>) : f (a -> b) -> f a -> f b 
+    (Just f) <$> (Just a) = Just (f a)
+    _        <$> _        = Nothing
+
 
 ---- some mathematical operations
 
@@ -154,6 +143,9 @@ acos x = prim__floatACos x
 atan : Float -> Float
 atan x = prim__floatATan x
 
+atan2 : Float -> Float -> Float
+atan2 y x = atan (y/x)
+
 sqrt : Float -> Float
 sqrt x = prim__floatSqrt x
 
@@ -163,16 +155,32 @@ floor x = prim__floatFloor x
 ceiling : Float -> Float
 ceiling x = prim__floatCeil x
 
--- Ranges
+---- Ranges
 
-count : Num a => a -> a -> a -> List a
-count a inc b = if (a <= b) then (a :: count (a + inc) inc b)
-                            else []
+count : (Ord a, Num a) => a -> a -> a -> List a
+count a inc b = if a <= b then a :: count (a + inc) inc b
+                          else []
+  
+countFrom : (Ord a, Num a) => a -> a -> List a
+countFrom a inc = a :: lazy (countFrom (a + inc) inc)
   
 syntax "[" [start] ".." [end] "]" 
      = count start 1 end 
 syntax "[" [start] "," [next] ".." [end] "]" 
      = count start (next - start) end 
+
+syntax "[" [start] "..]" 
+     = countFrom start 1
+syntax "[" [start] "," [next] "..]" 
+     = countFrom start (next - start)
+
+---- More utilities
+
+sum : Num a => List a -> a
+sum = foldl (+) 0
+
+prod : Num a => List a -> a
+prod = foldl (*) 1
 
 ---- some basic io
 
@@ -240,9 +248,19 @@ feof : File -> IO Bool
 feof (FHandle h) = do eof <- do_feof h
                       return (not (eof == 0)) 
 
+nullPtr : Ptr -> IO Bool
+nullPtr p = do ok <- mkForeign (FFun "isNull" [FPtr] FInt) p 
+               return (ok /= 0);
+
+validFile : File -> IO Bool
+validFile (FHandle h) = do x <- nullPtr h
+                           return (not x)
+
 while : |(test : IO Bool) -> |(body : IO ()) -> IO ()
 while t b = do v <- t
-               if v then (do { b; while t b }) else return ()
+               if v then do b
+                            while t b
+                    else return ()
                
 
 readFile : String -> IO String
@@ -254,8 +272,7 @@ readFile fn = do h <- openFile fn Read
     readFile' : File -> String -> IO String
     readFile' h contents = 
        do x <- feof h
-          if (not x) then (do l <- fread h
-                              readFile' h (contents ++ l)
-                          )
-                       else (return contents) 
+          if not x then do l <- fread h
+                           readFile' h (contents ++ l)
+                   else return contents
 

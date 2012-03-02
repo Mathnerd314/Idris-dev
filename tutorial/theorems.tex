@@ -29,6 +29,46 @@ twoPlusTwo = refl
 \end{SaveVerbatim}
 \useverb{eqprf}
 
+\subsection{The Empty Type}
+
+\label{sect:empty}
+
+There is an empty type, \texttt{\_|\_}, which has no constructors. It is
+therefore impossible to construct an element of the empty type, at least
+without using a partially defined or general recursive function (see Section
+\ref{sect:totality} for more details). We can therefore use the empty type
+to prove that something is impossible, for example zero is never equal
+to a successor:
+
+\begin{SaveVerbatim}{natdisjoint}
+
+disjoint : (n : Nat) -> O = S n -> _|_
+disjoint n p = replace {P = disjointTy} p ()
+  where
+    disjointTy : Nat -> Set
+    disjointTy O = ()
+    disjointTy (S k) = _|_
+
+\end{SaveVerbatim}
+\useverb{natdisjoint} 
+
+\noindent
+There is no need to worry too much about how this function works --- essentially,
+it applies the library function \texttt{replace}, which uses an equality proof to 
+transform a predicate. Here we use it to transform a value of a type which can exist,
+the empty tuple, to a value of a type which can't, by using a proof of something
+which can't exist.
+
+Once we have an element of the empty type, we can prove anything. \texttt{FalseElim}
+is defined in the library, to assist with proofs by contradiction.
+
+\begin{SaveVerbatim}{falseelim}
+
+FalseElim : _|_ -> a
+
+\end{SaveVerbatim}
+\useverb{falseelim} 
+
 \subsection{Simple Theorems}
 
 When type checking dependent types, the type itself gets \emph{normalised}. So imagine
@@ -69,18 +109,18 @@ on the first argument to \texttt{plus}, namely \texttt{n}.
 
 plusReducesO : (n:Nat) -> n = plus n O
 plusReducesO O = refl
-plusReducesO (S k) = eqRespS (plusReducesO k)
+plusReducesO (S k) = cong (plusReducesO k)
 
 \end{SaveVerbatim}
 \useverb{plusRedO}
 
 \noindent
-\texttt{eqRespS} is a function defined in the library which states that
-equality respects successor:
+\texttt{cong} is a function defined in the library which states that
+equality respects function application:
 
 \begin{SaveVerbatim}{resps}
 
-eqRespS : m = n -> S m = S n
+cong : {f : t -> u} -> a = b -> f a = f b
 
 \end{SaveVerbatim}
 \useverb{resps}
@@ -92,7 +132,7 @@ We can do the same for the reduction behaviour of plus on successors:
 
 plusReducesS : (n:Nat) -> (m:Nat) -> S (plus n m) = plus n (S m)
 plusReducesS O m = refl
-plusReducesS (S k) m = eqRespS (plusReducesS k m)
+plusReducesS (S k) m = cong (plusReducesS k m)
 
 \end{SaveVerbatim}
 \useverb{plusRedS}
@@ -241,7 +281,7 @@ Let us now prove the other required lemma, \texttt{plusredO\_S}:
 In this case, the goal is a function type, using \texttt{k} (the argument accessible by
 pattern matching) and \texttt{ih} (the local variable containing the result of
 the recursive call). We can introduce these as premisses using the \texttt{intro} tactic
-twice. This gives:
+twice (or \texttt{intros}, which introduces all arguments as premisses). This gives:
 
 \begin{SaveVerbatim}{prSintros}
 
@@ -282,8 +322,7 @@ the goal using that proof. Here, it results in an equality which is trivially pr
 plusredO_S: no more goals
 -plusredO_S> qed 
 plusredO_S = proof {
-    intro;
-    intro;
+    intros;
     rewrite ih;
     trivial;
 }
@@ -294,3 +333,85 @@ plusredO_S = proof {
 \noindent
 Again, we can add this proof to the end of our source file using the \texttt{:addproof}
 command at the interactive prompt.
+
+\subsection{Totality Checking}
+
+\label{sect:totality}
+
+If we really want to trust our proofs, it is important that they are defined by
+\emph{total} functions --- that is, a function which is defined for all possible inputs
+and is guaranteed to terminate. Otherwise we could construct an element of the empty type,
+from which we could prove anything:
+
+\begin{SaveVerbatim}{empties}
+
+-- making use of 'hd' being partially defined
+empty1 : _|_
+empty1 = hd [] where
+    hd : List a -> a
+    hd (x :: xs) = x
+
+-- not terminating
+empty2 : _|_
+empty2 = empty2
+
+\end{SaveVerbatim}
+\useverb{empties} 
+
+\noindent
+Internally, \Idris{} checks every definition for totality, and we can check at the prompt
+with the \texttt{:total} command. We see that neither of the above definitions is total:
+
+\begin{SaveVerbatim}{totalcheck}
+
+*theorems> :total empty1
+possibly not total due to: empty1#hd
+	not total as there are missing cases
+*theorems> :total empty2
+possibly not total as it is not well founded
+
+\end{SaveVerbatim}
+\useverb{totalcheck} 
+
+\noindent
+Note the use of the word ``possibly'' --- a totality check can, of course, never be certain
+due to the undecidability of the halting problem. The check is, therefore, conservative.
+It is also possible (and indeed advisable, in the case of proofs) to mark functions as
+total so that it will be a compile time error for the totality check to fail:
+
+\begin{SaveVerbatim}{emptyfail}
+
+total empty2 : _|_
+empty2 = empty2
+
+Type checking ./theorems.idr
+theorems.idr:25:empty2 is possibly not total as it is not well founded
+
+\end{SaveVerbatim}
+\useverb{emptyfail} 
+
+\noindent
+Reassuringly, our proof in Section \ref{sect:empty} that the zero and successor constructors
+are disjoint is total:
+
+\begin{SaveVerbatim}{totdisjoint}
+
+*theorems> :total disjoint
+Total
+
+\end{SaveVerbatim}
+\useverb{totdisjoint} 
+
+\noindent
+The totality check is currently very conservative. To be recorded as total, a function must:
+
+\begin{itemize}
+\item Cover all possible inputs
+\item Be \emph{well-founded} --- i.e. each recursive call must have a decreasing argument
+\item Not call any non-total functions
+\item Not use any data types which are not \emph{strictly positive}
+\item (In version 0.9.2) Not be mutually recursive
+\end{itemize}
+
+\noindent
+The last of these conditions may be relaxed in the future.

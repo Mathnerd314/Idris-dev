@@ -11,6 +11,8 @@ import qualified Data.Binary as B
 import Data.Binary hiding (get, put)
 import Data.Data(Data, Typeable)
 
+import Util.Pretty hiding (Str)
+
 {- The language has:
    * Full dependent types
    * A hierarchy of universes, with cumulativity: Set : Set1, Set1 : Set2, ...
@@ -35,24 +37,69 @@ data FC = FC { fc_fname :: String,
 deriving instance Binary FC 
 !-}
 
+instance Sized FC where
+  size (FC f l) = 1 + length f
+
 instance Show FC where
     show (FC f l) = f ++ ":" ++ show l
 
 data Err = Msg String
-         | CantUnify Term Term Err
+         | CantUnify Term Term Err Int -- Int is 'score' - how much we did unify
+         | NoSuchVariable Name
          | NotInjective Term Term Term
+         | CantResolve Term
          | IncompleteTerm Term
          | UniverseError
          | ProgramLineComment
          | At FC Err
   deriving (Eq, Data, Typeable)
 
+instance Sized Err where
+  size (Msg msg) = length msg
+  size (CantUnify left right err score) = size left + size right + size err
+  size (NoSuchVariable name) = size name
+  size (NotInjective l c r) = size l + size c + size r
+  size (CantResolve trm) = size trm
+  size (IncompleteTerm trm) = size trm
+  size UniverseError = 1
+  size ProgramLineComment = 1
+  size (At fc err) = size fc + size err
+
+score :: Err -> Int
+score (CantUnify _ _ m s) = s + score m
+score (CantResolve _) = 20
+score (NoSuchVariable _) = 1000
+score _ = 0
+
 instance Show Err where
     show (Msg s) = s
+    show (CantUnify l r e i) = "CantUnify " ++ show l ++ " " ++ show r ++ " "
+                               ++ show e ++ " " ++ show i
+    show _ = "Error"
+
+instance Pretty Err where
+  pretty (Msg m) = text m
+  pretty (CantUnify l r e i) =
+    if size l + size r > breakingSize then
+      text "Cannot unify" <+> colon $$
+        nest nestingSize (pretty l <+> text "and" <+> pretty r) $$
+        nest nestingSize (text "where" <+> pretty e <+> text "with" <+> (text . show $ i))
+    else
+      text "Cannot unify" <+> colon <+> pretty l <+> text "and" <+> pretty r $$
+        nest nestingSize (text "where" <+> pretty e <+> text "with" <+> (text . show $ i))
+  pretty _ = text "Error"
 
 data TC a = OK a
           | Error Err
   deriving (Eq, Functor, Data, Typeable)
+
+instance Pretty a => Pretty (TC a) where
+  pretty (OK ok) = pretty ok
+  pretty (Error err) =
+    if size err > breakingSize then
+      text "Error" <+> colon $$ (nest nestingSize $ pretty err)
+    else
+      text "Error" <+> colon <+> pretty err
 
 instance Show a => Show (TC a) where
     show (OK x) = show x
@@ -107,6 +154,16 @@ data Name = UN String
 {-! 
 deriving instance Binary Name 
 !-}
+
+instance Sized Name where
+  size (UN n)     = 1
+  size (NS n els) = 1 + length els
+  size (MN i n) = 1
+
+instance Pretty Name where
+  pretty (UN n) = text n
+  pretty (NS n s) = pretty n
+  pretty (MN i s) = lbrace <+> text s <+> (text . show $ i) <+> rbrace
 
 instance Show Name where
     show (UN n) = n
@@ -174,18 +231,48 @@ addAlist ((n, tm) : ds) ctxt = addDef n tm (addAlist ds ctxt)
 
 data Const = I Int | BI Integer | Fl Double | Ch Char | Str String 
            | IType | BIType     | FlType    | ChType  | StrType    
-           | PtrType
+           | PtrType | Forgot
   deriving (Eq, Data, Typeable)
 {-! 
 deriving instance Binary Const 
 !-}
 
+instance Sized Const where
+  size _ = 1
+
+instance Pretty Const where
+  pretty (I i) = text . show $ i
+  pretty (BI i) = text . show $ i
+  pretty (Fl f) = text . show $ f
+  pretty (Ch c) = text . show $ c
+  pretty (Str s) = text s
+  pretty IType = text "Int"
+  pretty BIType = text "BigInt"
+  pretty FlType = text "Float"
+  pretty ChType = text "Char"
+  pretty StrType = text "String"
+  pretty PtrType = text "Ptr"
+  pretty Forgot = text "Forgot"
+
 data Raw = Var Name
          | RBind Name (Binder Raw) Raw
          | RApp Raw Raw
          | RSet
+         | RForce Raw
          | RConstant Const
   deriving (Show, Eq, Data, Typeable)
+
+instance Sized Raw where
+  size (Var name) = 1
+  size (RBind name bind right) = 1 + size bind + size right
+  size (RApp left right) = 1 + size left + size right
+  size RSet = 1
+  size (RForce raw) = 1 + size raw
+  size (RConstant const) = size const
+
+instance Pretty Raw where
+  pretty = text . show
+
 {-! 
 deriving instance Binary Raw 
 !-}
@@ -207,6 +294,17 @@ data Binder b = Lam   { binderTy  :: b }
 deriving instance Binary Binder 
 !-}
 
+instance Sized a => Sized (Binder a) where
+  size (Lam ty) = 1 + size ty
+  size (Pi ty) = 1 + size ty
+  size (Let ty val) = 1 + size ty + size val
+  size (NLet ty val) = 1 + size ty + size val
+  size (Hole ty) = 1 + size ty
+  size (GHole ty) = 1 + size ty
+  size (Guess ty val) = 1 + size ty + size val
+  size (PVar ty) = 1 + size ty
+  size (PVTy ty) = 1 + size ty
+
 fmapMB :: Monad m => (a -> m b) -> Binder a -> m (Binder b)
 fmapMB f (Let t v)   = liftM2 Let (f t) (f v)
 fmapMB f (NLet t v)  = liftM2 NLet (f t) (f v)
@@ -221,6 +319,11 @@ fmapMB f (PVTy t)    = liftM PVTy (f t)
 raw_apply :: Raw -> [Raw] -> Raw
 raw_apply f [] = f
 raw_apply f (a : as) = raw_apply (RApp f a) as
+
+raw_unapply :: Raw -> (Raw, [Raw])
+raw_unapply t = ua [] t where
+    ua args (RApp f a) = ua (a:args) f
+    ua args t          = (t, args)
 
 data RawFun = RawFun { rtype :: Raw,
                        rval  :: Raw
@@ -242,6 +345,9 @@ type RProgram = [(Name, RDef)]
 data UExp = UVar Int -- universe variable
           | UVal Int -- explicit universe level
   deriving (Eq, Ord, Data, Typeable)
+
+instance Sized UExp where
+  size _ = 1
 
 -- We assume that universe levels have been checked, so anything external
 -- can just have the same universe variable and we won't get any new
@@ -268,21 +374,47 @@ instance Show UConstraint where
 type UCs = (Int, [UConstraint])
 
 data NameType = Bound | Ref | DCon Int Int | TCon Int Int
-  deriving (Show, Eq, Data, Typeable)
+  deriving (Show, Data, Typeable)
 {-! 
 deriving instance Binary NameType 
 !-}
+
+instance Sized NameType where
+  size _ = 1
+
+instance Pretty NameType where
+  pretty = text . show
+
+instance Eq NameType where
+    Bound    == Bound    = True
+    Ref      == Ref      = True
+    DCon _ a == DCon _ b = (a == b) -- ignore tag
+    TCon _ a == TCon _ b = (a == b) -- ignore tag
+    _        == _        = False
 
 data TT n = P NameType n (TT n) -- embed type
           | V Int 
           | Bind n (Binder (TT n)) (TT n)
           | App (TT n) (TT n) -- function, function type, arg
           | Constant Const
+          | Erased
           | Set UExp
   deriving (Functor, Data, Typeable)
 {-! 
 deriving instance Binary TT 
 !-}
+
+instance Sized a => Sized (TT a) where
+  size (P name n trm) = 1 + size name + size n + size trm
+  size (V v) = 1
+  size (Bind nm binder bdy) = 1 + size nm + size binder + size bdy
+  size (App l r) = 1 + size l + size r
+  size (Constant c) = size c
+  size Erased = 1
+  size (Set u) = 1 + size u
+
+instance Pretty a => Pretty (TT a) where
+  pretty _ = text "test"
 
 type EnvTT n = [(n, Binder (TT n))]
 
@@ -299,22 +431,9 @@ instance Eq n => Eq (TT n) where
     (==) (App fx ax)    (App fy ay)    = fx == fy && ax == ay
     (==) (Set _)        (Set _)        = True -- deal with constraints later
     (==) (Constant x)   (Constant y)   = x == y
+    (==) Erased         _              = True
+    (==) _              Erased         = True
     (==) _              _              = False
-
-convEq :: Eq n => TT n -> TT n -> StateT UCs TC Bool
-convEq (P xt x _) (P yt y _) = return (xt == yt && x == y)
-convEq (V x)      (V y)      = return (x == y)
-convEq (Bind _ xb xs) (Bind _ yb ys) 
-                             = liftM2 (&&) (convEqB xb yb) (convEq xs ys)
-  where convEqB (Let v t) (Let v' t') = liftM2 (&&) (convEq v v') (convEq t t')
-        convEqB (Guess v t) (Guess v' t') = liftM2 (&&) (convEq v v') (convEq t t')
-        convEqB b b' = convEq (binderTy b) (binderTy b')
-convEq (App fx ax) (App fy ay)   = liftM2 (&&) (convEq fx fy) (convEq ax ay)
-convEq (Constant x) (Constant y) = return (x == y)
-convEq (Set x) (Set y)           = do (v, cs) <- get
-                                      put (v, ULE x y : cs)
-                                      return True
-convEq _ _ = return False
 
 -- A few handy operations on well typed terms:
 
@@ -384,6 +503,16 @@ noOccurrence n t = no' 0 t
     no' i (App f a) = no' i f && no' i a
     no' i _ = True
 
+-- Returns all names used free in the term
+
+freeNames :: Eq n => TT n -> [n]
+freeNames (P _ n _) = [n]
+freeNames (Bind n (Let t v) sc) = nub $ freeNames v ++ (freeNames sc \\ [n])
+                                        ++ freeNames t
+freeNames (Bind n b sc) = nub $ freeNames (binderTy b) ++ (freeNames sc \\ [n])
+freeNames (App f a) = nub $ freeNames f ++ freeNames a
+freeNames _ = []
+
 -- Return the arity of a (normalised) type
 
 arity :: TT n -> Int
@@ -412,7 +541,8 @@ forget tm = fe [] tm
     fe env (Constant c) 
                      = RConstant c
     fe env (Set i)   = RSet
-
+    fe env Erased    = RConstant Forgot 
+    
 bindAll :: [(n, Binder (TT n))] -> TT n -> TT n 
 bindAll [] t =t
 bindAll ((n, b) : bs) t = Bind n b (bindAll bs t)
@@ -423,6 +553,12 @@ bindTyArgs b xs = bindAll (map (\ (n, ty) -> (n, b ty)) xs)
 getArgTys :: TT n -> [(n, TT n)]
 getArgTys (Bind n (Pi t) sc) = (n, t) : getArgTys sc
 getArgTys _ = []
+
+getRetTy :: TT n -> TT n
+getRetTy (Bind n (PVar _) sc) = getRetTy sc
+getRetTy (Bind n (PVTy _) sc) = getRetTy sc
+getRetTy (Bind n (Pi _) sc)   = getRetTy sc
+getRetTy sc = sc
 
 uniqueName :: Name -> [Name] -> Name
 uniqueName n hs | n `elem` hs = uniqueName (nextName n) hs
@@ -468,6 +604,54 @@ instance Show Const where
 showEnv env t = showEnv' env t False
 showEnvDbg env t = showEnv' env t True
 
+prettyEnv env t = prettyEnv' env t False
+  where
+    prettyEnv' env t dbg = prettySe 10 env t dbg
+
+    bracket outer inner p
+      | inner > outer = lparen <> p <> rparen
+      | otherwise     = p
+
+    prettySe p env (P nt n t) debug =
+      pretty n <+> 
+        if debug then
+          lbrack <+> pretty nt <+> colon <+> prettySe 10 env t debug <+> rbrack
+        else
+          empty
+    prettySe p env (V i) debug
+      | i < length env =
+        if debug then
+          text . show . fst $ env!!i
+        else
+          lbrack <+> text (show i) <+> rbrack
+      | otherwise      = text "unbound" <+> text (show i) <+> text "!"
+    prettySe p env (Bind n b@(Pi t) sc) debug
+      | noOccurrence n sc && not debug =
+          bracket p 2 $ prettySb env n b debug <> prettySe 10 ((n, b):env) sc debug
+    prettySe p env (Bind n b sc) debug =
+      bracket p 2 $ prettySb env n b debug <> prettySe 10 ((n, b):env) sc debug
+    prettySe p env (App f a) debug =
+      bracket p 1 $ prettySe 1 env f debug <+> prettySe 0 env a debug
+    prettySe p env (Constant c) debug = pretty c
+    prettySe p env Erased debug = text "[_]"
+    prettySe p env (Set i) debug = text "Set" <+> (text . show $ i)
+
+    prettySb env n (Lam t) = prettyB env "?" "=>" n t
+    prettySb env n (Hole t) = prettyB env "?defer" "." n t
+    prettySb env n (Pi t) = prettyB env "(" ") ->" n t
+    prettySb env n (PVar t) = prettyB env "pat" "." n t
+    prettySb env n (PVTy t) = prettyB env "pty" "." n t
+    prettySb env n (Let t v) = prettyBv env "let" "in" n t v
+    prettySb env n (Guess t v) = prettyBv env "??" "in" n t v
+
+    prettyB env op sc n t debug =
+      text op <> pretty n <+> colon <+> prettySe 10 env t debug <> text sc
+
+    prettyBv env op sc n t v debug =
+      text op <> pretty n <+> colon <+> prettySe 10 env t debug <+> text "=" <+>
+        prettySe 10 env v debug <> text sc
+          
+
 showEnv' env t dbg = se 10 env t where
     se p env (P nt n t) = show n 
                             ++ if dbg then "{" ++ show nt ++ " : " ++ se 10 env t ++ "}" else ""
@@ -479,6 +663,7 @@ showEnv' env t dbg = se 10 env t where
     se p env (Bind n b sc) = bracket p 2 $ sb env n b ++ se 10 ((n,b):env) sc
     se p env (App f a) = bracket p 1 $ se 1 env f ++ " " ++ se 0 env a
     se p env (Constant c) = show c
+    se p env Erased = "[__]"
     se p env (Set i) = "Set " ++ show i
 
     sb env n (Lam t)  = showb env "\\ " " => " n t

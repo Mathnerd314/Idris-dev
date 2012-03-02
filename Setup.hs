@@ -1,33 +1,53 @@
 import Distribution.Simple
 import Distribution.Simple.InstallDirs as I
 import Distribution.Simple.LocalBuildInfo as L
+import qualified Distribution.Simple.Setup as S
+import qualified Distribution.Simple.Program as P
 import Distribution.PackageDescription
 
 import System.Exit
+import System.FilePath ((</>))
 import System.Process
 
 -- After Idris is built, we need to check and install the prelude and other libs
 
-system' cmd = do 
-    exit <- system cmd
-    case exit of
-      ExitSuccess -> return ()
-      ExitFailure _ -> exitWith exit
+make verbosity = P.runProgramInvocation verbosity . P.simpleProgramInvocation "make"
 
-postCleanLib args flags desc _
-    = system' "make -C lib clean"
+cleanStdLib verbosity
+    = make verbosity [ "-C", "lib", "clean" ]
 
-addPrefix pfx var c = "export " ++ var ++ "=" ++ show pfx ++ "/" ++ c ++ ":$" ++ var
+installStdLib pkg local verbosity copy
+    = do let dirs = L.absoluteInstallDirs pkg local copy
+         let idir = datadir dirs
+         let icmd = ".." </> buildDir local </> "idris" </> "idris"
+         putStrLn $ "Installing libraries in " ++ idir
+         make verbosity
+               [ "-C", "lib", "install"
+               , "TARGET=" ++ idir
+               , "IDRIS=" ++ icmd
+               ]
 
-postInstLib args flags desc local
-    = do let pkg = localPkgDescr local
-         let penv = packageTemplateEnv (package pkg)
-         let dirs = substituteInstallDirTemplates penv (installDirTemplates local)
-         let idir = fromPathTemplate (datadir dirs) ++ "/" ++ 
-                    fromPathTemplate (datasubdir dirs)
-         system' $ "make -C lib install TARGET=" ++ idir
+checkStdLib local verbosity
+    = do let icmd = ".." </> buildDir local </> "idris" </> "idris"
+         putStrLn $ "Building libraries..."
+         make verbosity
+               [ "-C", "lib", "check"
+               , "IDRIS=" ++ icmd
+               ]
 
-main = defaultMainWithHooks (simpleUserHooks { postInst = postInstLib,
-                                               postClean = postCleanLib })
+-- Install libraries during both copy and install
+-- See http://hackage.haskell.org/trac/hackage/ticket/718
+main = defaultMainWithHooks $ simpleUserHooks
+        { postCopy = \ _ flags pkg lbi -> do
+              installStdLib pkg lbi (S.fromFlag $ S.copyVerbosity flags)
+                                    (S.fromFlag $ S.copyDest flags)
+        , postInst = \ _ flags pkg lbi -> do
+              installStdLib pkg lbi (S.fromFlag $ S.installVerbosity flags)
+                                    NoCopyDest
+        , postClean = \ _ flags _ _ -> do
+              cleanStdLib (S.fromFlag $ S.cleanVerbosity flags)
+        , postBuild = \ _ flags _ lbi -> do
+              checkStdLib lbi (S.fromFlag $ S.buildVerbosity flags)
+        }
 
 
