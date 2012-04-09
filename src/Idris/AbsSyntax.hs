@@ -28,11 +28,12 @@ data IOption = IOption { opt_logLevel :: Int,
                          opt_coverage :: Bool,
                          opt_showimp  :: Bool,
                          opt_repl     :: Bool,
-                         opt_verbose  :: Bool
+                         opt_verbose  :: Bool,
+                         opt_ibcsubdir :: FilePath
                        }
     deriving (Show, Eq, Data, Typeable)
 
-defaultOpts = IOption 0 False False True False True True
+defaultOpts = IOption 0 False False True False True True ""
 
 -- TODO: Add 'module data' to IState, which can be saved out and reloaded quickly (i.e
 -- without typechecking).
@@ -317,6 +318,15 @@ setCoverage t = do i <- get
                    let opt' = opts { opt_coverage = t }
                    put (i { idris_options = opt' })
 
+setIBCSubDir :: FilePath -> Idris ()
+setIBCSubDir fp = do i <- get
+                     let opts = idris_options i
+                     let opt' = opts { opt_ibcsubdir =fp }
+                     put (i { idris_options = opt' })
+
+valIBCSubDir :: IState -> Idris FilePath
+valIBCSubDir i = return (opt_ibcsubdir (idris_options i))
+
 impShow :: Idris Bool
 impShow = do i <- get
              return (opt_showimp (idris_options i))
@@ -351,12 +361,14 @@ setTypeCase t = do i <- get
 
 -- Commands in the REPL
 
-data Command = Quit | Help | Eval PTerm | Check PTerm | TotCheck Name
+data Command = Quit   | Help | Eval PTerm | Check PTerm | TotCheck Name
              | Reload | Edit
              | Compile String | Execute | ExecVal PTerm
-             | Metavars | Prove Name | AddProof | Universes
+             | Metavars    | Prove Name | AddProof | Universes
              | TTShell 
-             | LogLvl Int | Spec PTerm | HNF PTerm | Defn Name | Info Name
+             | LogLvl Int | Spec PTerm | HNF PTerm | Defn Name 
+             | Info Name  | DebugInfo Name
+             | Search PTerm
              | NOP
     deriving (Show, Eq, Data, Typeable)
 
@@ -1004,7 +1016,9 @@ showImp impl tm = se 10 tm where
       where showbasic n@(UN _) = show n
             showbasic (MN _ s) = s
             showbasic (NS n s) = showSep "." (reverse s) ++ "." ++ showbasic n
-    se p (PLam n ty sc) = bracket p 2 $ "\\ " ++ show n ++ " => " ++ show sc
+    se p (PLam n ty sc) = bracket p 2 $ "\\ " ++ show n ++ 
+                            (if impl then " : " ++ se 10 ty else "") ++ " => " 
+                            ++ se 10 sc
     se p (PLet n ty v sc) = bracket p 2 $ "let " ++ show n ++ " = " ++ se 10 v ++
                             " in " ++ se 10 sc 
     se p (PPi (Exp l s) n ty sc)

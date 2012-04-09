@@ -1,24 +1,92 @@
 \section{Introduction}
 
-This paper documents a new implementation of \Idris{}~\cite{Brady2011a}, in which
-I attempt to learn from the mistakes of the previous implementation and make
-it nice and clean and solid. Maybe I'll keep it up to date as I write the
-code.
+Dependently typed programming languages, such as Agda \cite{norell2007thesis}
+and Coq \cite{Bertot2004}, have emerged in recent years as a promising approach
+to ensuring the correctness of software. The \Idris{} language
+\cite{Brady2011a} aims to take these ideas further, by providing support for
+verification of general purpose systems software. In contrast to Agda and Coq,
+which have arisen from the theorem proving community, \Idris{} takes Haskell as
+its main influence.  Recent Haskell extensions such as GADTs and type families have
+given some of the power of dependent types to Haskell programmers. In the short
+term this approach has a clear advantage, since it builds on a mature language
+infrastructure with extensive library support.
+Taking a longer term view, however,
+these extensions are inherently limited in that they are required to maintain
+backwards compatibility with existing Haskell implementations.  \Idris{}, being a new
+language, has no such limitation, essentially asking the question:
 
-The title is deliberately a reordering of the words in my thesis
-title~\cite{Brady2005}. Whereas that was about taking elaborated programs
-in the core type theory of \Epigram{}~\cite{McBride2004a} and compiling them
-efficiently (i.e. making the language implementation practical) this paper is
-about making the language itself practical. 
+\begin{center}
+\emph{``What if Haskell had \emph{full} dependent types?''}
+\end{center}
 
-\subsection{Some Goals}
+It is important for the sake of usability of a programming language to provide
+a notation which allows programmers to express high level concepts
+in a natural way. Taking Haskell as a starting point means that \Idris{} offers
+high level structures such as type classes, \texttt{do}-notation, primitive types
+and monadic I/O, for example.
+Nevertheless, it is important for the sake of correctness of the language implementation
+to have a small core language with well understood meta-theory
+\cite{Altenkirch2010}.  
+How can we achieve both of these goals?
+
+This paper describes a method for elaborating a high level dependently typed
+functional programming language to a low level core language based on dependent
+type theory.  The method involves building an Embedded Domain Specific Language
+(EDSL) for constructing programs in the core language, using \emph{tactics}
+directed by high level program syntax.  
+As we shall see, this method allows higher level language constructs to be
+constructed in a straightforward manner, without compromising the simplicity
+of the underlying type theory.
+
+\subsection{Overview}
+
+A dependently typed programming language relies on several components, many of
+which are now well understood. For example, we rely on a type checker for
+the core type theory \cite{Chapman2005epigram,loh2010tutorial}, a
+unification algorithm \cite{Miller1992} and an evaluator. However, it is less
+well understood how to combine these components effectively into a practical
+programming language. Therefore, the primary contribution of this paper is
+an EDSL based method for translating programs in a
+high level dependently typed programming language to a small core type theory,
+\TT{}, based on UTT \cite{luo1994}. The paper describes the structure of the
+EDSL including proof and system state, and introduces a collection of \remph{tactics}
+for manipulating incomplete programs.
+Secondly, the paper gives a detailed description of the core type theory used
+by \Idris{}, including a full description of the typing rules. Finally, through
+describing the EDSL and the specific tactics, the paper shows how to extend
+\Idris{} with higher level features.
+While we apply these ideas to \Idris{} specifically, the method for term construction
+is equally applicable to other typed programming languages.
+
+The paper is structured as follows: In Section \ref{sect:hll} I give an overview of
+programming in \Idris{}, introducing the high level constructs which will be
+translated to the core language; Section \ref{sect:typechecking} describes the
+core language \TT{} and its typing rules, covering expressions, data types
+and pattern matching; Section \ref{sect:elaboration} describes the method
+for translating \Idris{} to \TT{}, beginning with a restricted language
+\IdrisM{} before extending to higher level features; finally, in 
+Section \ref{sect:discussion} we discuss related work and conclude.
+
+
+\subsection{Typographical conventions}
+
+This paper presents programs in two different but related languages: a high level
+language \Idris{} intended for programmers, and a low level language \TT{} to
+which \Idris{} is elaborated. We distinguish these languages typographically as
+follows:
 
 \begin{itemize}
-\item Type checking dependent types~\cite{Chapman2005epigram,loh2010tutorial} is just one component
- of a language. There is folklore about what to do to turn it into a language. This
- paper aims to help language implementers avoid working things out for themselves.
-\item What's the difference between a theorem prover and a practical systems programming
- language? Not much...
+\item \Idris{} programs are written in \texttt{truetype}, as they are written
+in a conventional text editor. We use \texttt{e$_i$} to stand for non-terminal
+expressions.
+\item \TT{} programs are written in mathematical notation, with names arising
+from \Idris{} expressions written in \texttt{truetype}. We use vector notation
+$\te$ to stand for sequences of expressions.
 \end{itemize}
 
-Also note --- to be an expert user of a language requires good understanding of the internals.
+Additionally, we describe the translation from \Idris{} to \TT{} in the form
+of \emph{meta-operations}, which in practice are Haskell programs. Meta-operations
+are operations on \Idris{} and \TT{} syntax, and are identified by their names being
+in $\MO{SmallCaps}$.
+
+

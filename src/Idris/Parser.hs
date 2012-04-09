@@ -58,8 +58,9 @@ lchar = lexeme.char
 loadModule :: FilePath -> Idris String
 loadModule f 
    = idrisCatch (do datadir <- liftIO $ getDataDir
-                    fp <- liftIO $ findImport [".", datadir] f
                     i <- getIState
+                    ibcsd <- valIBCSubDir i
+                    fp <- liftIO $ findImport [".", datadir] ibcsd f
                     if (f `elem` imported i)
                        then iLOG $ "Already read " ++ f
                        else do putIState (i { imported = f : imported i })
@@ -104,7 +105,8 @@ loadSource lidr f
                   i <- get
                   mapM_ checkDeclTotality (idris_totcheck i)
                   iLOG ("Finished " ++ f)
-                  let ibc = dropExtension f ++ ".ibc"
+                  ibcsd <- valIBCSubDir i
+                  let ibc = ibcPathNoFallback ibcsd f
                   iucheck
                   i <- getIState
                   addHides (hide_list i)
@@ -658,6 +660,7 @@ pSimpleExpr syn =
         <|> try (do c <- pConstant; fc <- pfc
                     return (modifyConst syn fc (PConstant c)))
         <|> do reserved "Set"; return PSet
+--         <|> do symbol "*"; return PSet
         <|> try (do symbol "()"; fc <- pfc; return (PTrue fc))
         <|> try (do symbol "_|_"; fc <- pfc; return (PFalse fc))
         <|> do lchar '_'; return Placeholder
