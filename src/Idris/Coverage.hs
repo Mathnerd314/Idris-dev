@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE PatternGuards, DeriveDataTypeable #-}
 
 module Idris.Coverage where
 
@@ -12,6 +12,7 @@ import Idris.Error
 
 import Data.List
 import Data.Either
+import Data.Data(Data, Typeable)
 import Debug.Trace
 
 -- Given a list of LHSs, generate a extra clauses which cover the remaining
@@ -138,7 +139,7 @@ checkPositive n (cn, ty)
 -- Totality checking - check for structural recursion (no mutual definitions yet)
 
 data LexOrder = LexXX | LexEQ | LexLT
-    deriving (Show, Eq, Ord)
+    deriving (Show, Eq, Ord, Data, Typeable)
 
 calcTotality :: [Name] -> FC -> Name -> [(Term, Term)] -> Idris Totality
 calcTotality path fc n pats 
